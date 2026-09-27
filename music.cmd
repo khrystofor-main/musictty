@@ -1,0 +1,3 @@
+@echo off
+rem Short command for the radio: music "query" | music next | music pause | music stop ...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0radio.ps1" %*

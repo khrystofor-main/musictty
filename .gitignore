@@ -1,0 +1,13 @@
+# personal listening data and settings (written at runtime)
+history.txt
+play-history.txt
+liked.txt
+liked-queue.txt
+volume.txt
+repeat-on
+
+# local yt-dlp build (install yt-dlp separately, see README)
+yt-dlp/
+
+# local Claude Code settings
+.claude/settings.local.json
