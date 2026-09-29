@@ -5,31 +5,28 @@ background (see daemon.py) and is reached over mpv's IPC.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import importlib.util
 import re
 import shutil
 import subprocess
 import sys
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
-from . import paths, player, youtube
-from .ipc import Mpv, MpvError, NotRunning
+from . import control, youtube
+from .control import Failure, list_lines
+from .ipc import Mpv, MpvError
 from .models import Track
 from .radio import (
     JUMP_MESSAGE,
-    LIKED_PLAYLIST,
     LIST_PROPERTY,
     RADIO_MIX,
     SOURCE_PROPERTY,
-    LaunchSpec,
 )
 from .store import (
     LIKED,
-    MAX_VOLUME,
     PLAYS,
     SEEDS,
     SETTINGS,
@@ -46,7 +43,8 @@ musictty — endless music radio in the terminal
   musictty <link>              new radio from a track link
                                (music.youtube.com, youtube.com, youtu.be)
 
-  musictty                     recent radios
+  musictty                     the player: now playing, radios, history, liked, search
+  musictty recent              recent radios
   musictty <n>                 start recent radio n again
 
   musictty list                current and played tracks (▶ current, ↻ on repeat, ♥ liked)
@@ -77,6 +75,7 @@ musictty — endless music radio in the terminal
   musictty help                this list"""
 
 SIMPLE = {
+    "recent",
     "now",
     "next",
     "prev",
@@ -105,10 +104,6 @@ class Invalid(Exception):
     """Not a command: nothing is touched."""
 
 
-class Failure(Exception):
-    """Print the message and exit with 1."""
-
-
 @dataclass(frozen=True)
 class Call:
     name: str
@@ -124,7 +119,7 @@ def _number(text: str) -> int | None:
 def parse(argv: list[str]) -> Call:
     """Strict: only what's in the help passes; everything else is invalid input."""
     if not argv:
-        return Call("recent")
+        return Call("ui")
     head, rest = argv[0], argv[1:]
     if head == "search":
         if not rest:
@@ -155,24 +150,7 @@ def parse(argv: list[str]) -> Call:
 
 def on_player(fn: Callable[[Mpv], Awaitable[T]]) -> T:
     """Run fn against the playing radio; NotRunning if there is none."""
-
-    async def go() -> T:
-        mpv = await Mpv.connect(paths.ipc_address())
-        try:
-            return await fn(mpv)
-        finally:
-            await mpv.close()
-
-    return asyncio.run(go())
-
-
-async def current_track(mpv: Mpv) -> dict | None:
-    items = await mpv.get(LIST_PROPERTY) or []
-    return next((it for it in items if it.get("current")), None)
-
-
-async def repeating(mpv: Mpv) -> bool:
-    return await mpv.get("loop-file") not in (None, False, "no")
+    return asyncio.run(control.with_player(fn))
 
 
 def pick(items: list[T], number: int) -> T:
@@ -193,41 +171,7 @@ def start_radio(
     queue: list[Track] | None = None,
     repeat_one: bool = False,
 ) -> None:
-    if not player.find_mpv():
-        raise Failure("mpv not found")
-    if query is not None:
-        found = youtube.search(query)
-        if not found:
-            raise Failure("nothing found")
-        seed, stream = found
-    else:
-        assert seed
-        stream = youtube.resolve(seed)
-    store = Store()
-    settings = store.settings()
-    spec = LaunchSpec(
-        seed=seed,
-        stream=stream,
-        queue=queue,
-        source=LIKED_PLAYLIST if queue is not None else RADIO_MIX,
-        volume=settings.volume,
-        # repeat is global and survives radio changes; `liked repeat` is for this run only
-        loop_file=settings.repeat or repeat_one,
-    )
-    address = paths.ipc_address()
-    # the old radio kept playing while the new one was being prepared: stop it only now
-    asyncio.run(player.stop(address))
-    store.trim_plays()
-    proc = player.spawn_radio(spec, paths.log_path())
-
-    async def started() -> None:
-        mpv = await player.wait_connect(address, lambda: proc.poll() is None, timeout=15)
-        await mpv.close()
-
-    try:
-        asyncio.run(started())
-    except NotRunning:
-        raise Failure(f"the player did not start, see {paths.log_path()}") from None
+    asyncio.run(control.start(seed, query=query, queue=queue, repeat_one=repeat_one))
 
 
 # --- commands ---
@@ -235,6 +179,16 @@ def start_radio(
 
 def cmd_help(call: Call) -> None:
     print(HELP)
+
+
+def cmd_ui(call: Call) -> int | None:
+    # the player needs a terminal; redirected, it's the list of recent radios, as in v0
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return cmd_recent(Call("recent"))
+    from .tui import run
+
+    run()
+    return None
 
 
 def cmd_recent(call: Call) -> None:
@@ -261,9 +215,9 @@ def cmd_now(call: Call) -> None:
 
     async def now(mpv: Mpv) -> str:
         # the title from the radio's list; until it's there, from the player
-        cur = await current_track(mpv)
+        cur = await control.current_track(mpv)
         title = (cur or {}).get("title") or await mpv.get("media-title") or ""
-        mark = "↻ " if await repeating(mpv) else ""
+        mark = "↻ " if await control.repeating(mpv) else ""
         if cur and cur.get("id") in liked:
             mark += "♥ "
         source = await mpv.get(SOURCE_PROPERTY) or RADIO_MIX
@@ -273,7 +227,7 @@ def cmd_now(call: Call) -> None:
 
 
 def cmd_like(call: Call) -> int | None:
-    cur = on_player(current_track)
+    cur = on_player(control.current_track)
     if not cur or not cur.get("id"):
         return 1
     track = Track(cur["id"], cur.get("title") or cur["id"])
@@ -286,25 +240,10 @@ def cmd_like(call: Call) -> int | None:
     return None
 
 
-def list_lines(items: list[dict], repeat: bool, liked: set[str]) -> list[str]:
-    """▶ current, ↻ at the current one when repeating, ♥ liked. The ↻ / ♥ columns appear only
-    when someone needs them; blanks keep the titles aligned."""
-    any_liked = any(it.get("id") in liked for it in items)
-    lines = []
-    for n, it in enumerate(items, 1):
-        mark = "▶ " if it.get("current") else "  "
-        if repeat:
-            mark += "↻ " if it.get("current") else "  "
-        if any_liked:
-            mark += "♥ " if it.get("id") in liked else "  "
-        lines.append(f"{n:2}. {mark}{it.get('title', '?')}")
-    return lines
-
-
 def cmd_list(call: Call) -> int | None:
     async def read(mpv: Mpv) -> tuple[list[dict], bool]:
         # newest on top; after going back, the tracks played "ahead" show above the current one
-        return list(reversed(await mpv.get(LIST_PROPERTY) or [])), await repeating(mpv)
+        return list(reversed(await mpv.get(LIST_PROPERTY) or [])), await control.repeating(mpv)
 
     items, repeat = on_player(read)
     if call.number is None:
@@ -343,35 +282,16 @@ def cmd_liked(call: Call) -> None:
     elif call.action is None:
         start_radio(track.id)
     else:
-        # from the chosen track to the end, then the top: in a loop that's "from here down"
-        i = call.number - 1
-        start_radio(track.id, queue=items[i:] + items[:i], repeat_one=call.action == "repeat")
+        queue = control.liked_queue(items, call.number - 1)
+        start_radio(track.id, queue=queue, repeat_one=call.action == "repeat")
 
 
 def cmd_repeat(call: Call) -> None:
-    # remember first (works with the radio off too), then apply to the playing one
-    on = call.text == "on"
-    store = Store()
-    store.save_settings(replace(store.settings(), repeat=on))
-    with contextlib.suppress(NotRunning):
-        on_player(lambda mpv: mpv.set("loop-file", "inf" if on else "no"))
+    asyncio.run(control.set_repeat(call.text == "on"))
 
 
 def cmd_volume(call: Call) -> None:
-    # change the playing radio and remember; with the radio off, only the remembered value
-    delta = 5 if call.name == "vol+" else -5
-    store = Store()
-    settings = store.settings()
-
-    async def step(mpv: Mpv) -> int:
-        await mpv.command("add", "volume", delta)
-        return round(await mpv.get("volume", settings.volume))
-
-    try:
-        volume = on_player(step)
-    except NotRunning:
-        volume = max(0, min(MAX_VOLUME, settings.volume + delta))
-    store.save_settings(replace(settings, volume=volume))
+    asyncio.run(control.change_volume(5 if call.name == "vol+" else -5))
 
 
 def cmd_playback(call: Call) -> None:
@@ -385,7 +305,7 @@ def cmd_playback(call: Call) -> None:
 
 
 def cmd_stop(call: Call) -> None:
-    asyncio.run(player.stop(paths.ipc_address()))
+    asyncio.run(control.stop())
 
 
 def cmd_update(call: Call) -> int:
@@ -427,6 +347,7 @@ def cmd_import(call: Call) -> None:
 
 COMMANDS: dict[str, Callable[[Call], int | None]] = {
     "help": cmd_help,
+    "ui": cmd_ui,
     "recent": cmd_recent,
     "radio": cmd_radio,
     "now": cmd_now,

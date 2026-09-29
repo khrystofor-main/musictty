@@ -1,7 +1,7 @@
 import pytest
 from fakes import tid
 
-from musictty import cli
+from musictty import cli, player
 from musictty.cli import Call, Invalid, list_lines, parse
 from musictty.models import Track
 from musictty.store import Settings, Store
@@ -12,7 +12,8 @@ S, A, B = (tid(n) for n in range(3))
 @pytest.mark.parametrize(
     ("argv", "call"),
     [
-        ([], Call("recent")),
+        ([], Call("ui")),
+        (["recent"], Call("recent")),
         (["3"], Call("recent", number=3)),
         (["search", "daft", "punk"], Call("radio", text="daft punk", action="search")),
         (["search", "next"], Call("radio", text="next", action="search")),
@@ -92,7 +93,8 @@ def test_lists_are_numbered_newest_first(capsys):
         store.add_seed(t)
         store.add_play(t)
         store.like(t)
-    for command in ([], ["history"], ["liked"]):
+    # the bare command with no terminal falls back to the list of recent radios, as in v0
+    for command in ([], ["recent"], ["history"], ["liked"]):
         assert cli.main(command) == 0
         assert capsys.readouterr().out == " 1. two\n 2. one\n"
 
@@ -149,7 +151,7 @@ def test_list_marks():
 
 
 def test_mpv_missing(monkeypatch, capsys):
-    monkeypatch.setattr(cli.player, "find_mpv", lambda: None)
+    monkeypatch.setattr(player, "find_mpv", lambda: None)
     assert cli.main([S]) == 1
     assert capsys.readouterr().out == "mpv not found\n"
 

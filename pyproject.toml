@@ -8,6 +8,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "platformdirs>=4",
+    "textual>=8.2.8",
     "yt-dlp[default,deno]",
 ]
 
