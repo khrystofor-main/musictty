@@ -1,8 +1,8 @@
 """Against a real mpv (silent, local WAV files instead of YouTube)."""
 
 import asyncio
+import os
 import shutil
-import sys
 import time
 import wave
 
@@ -15,8 +15,9 @@ from musictty.radio import LIST_PROPERTY, LaunchSpec, Radio
 from musictty.store import Store
 from musictty.youtube import Stream
 
+# CI sets MUSICTTY_REQUIRE_MPV: there a missing mpv is a failure, not a skip
 pytestmark = pytest.mark.skipif(
-    sys.platform == "win32" or not shutil.which("mpv"), reason="needs mpv on Linux/macOS"
+    not shutil.which("mpv") and not os.environ.get("MUSICTTY_REQUIRE_MPV"), reason="needs mpv"
 )
 
 S, A, B = (tid(n) for n in range(3))

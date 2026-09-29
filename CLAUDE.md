@@ -58,7 +58,7 @@ Data in the user data dir (platformdirs), same `date<TAB>id<TAB>title` lines as 
 - mpv 0.37 doesn't know some options in `mpv.conf` (`load-select`, `media-controls`, ...):
   it logs and skips them. Keep them, they matter on current Windows builds.
 - Windows-specific code (named pipes, process flags, stdin/log encodings) can't be run
-  in a Linux container: keep it small and flag it as untested.
+  in a Linux container: keep it small, and check it in the Windows CI job.
 
 ## Testing
 
@@ -76,3 +76,6 @@ Python: `uv run pytest` and `uv run ruff check src tests && uv run ruff format -
 - `tests/test_player.py` uses a real silent mpv (`MUSICTTY_MPV_ARGS=--ao=null`) and local
   WAV files instead of YouTube; skipped when mpv is missing.
 - YouTube may be unreachable from the sandbox: yt-dlp calls are tested with fakes.
+- CI (`.github/workflows/tests.yml`) runs lint and the tests on Windows and Ubuntu, with a
+  real mpv on both; `MUSICTTY_REQUIRE_MPV=1` turns a missing mpv into a failure there.
+  This is where the Windows code actually gets exercised.

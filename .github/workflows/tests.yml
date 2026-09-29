@@ -1,0 +1,52 @@
+name: tests
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv run --frozen ruff check src tests
+      - run: uv run --frozen ruff format --check src tests
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      # the integration tests must run here, not be skipped
+      MUSICTTY_REQUIRE_MPV: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Install mpv (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mpv
+
+      # a plain build folder on PATH: package managers put a shim exe in front of mpv.exe,
+      # and musictty needs the real process
+      - name: Install mpv (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo shinchiro/mpv-winbuild-cmake --pattern "mpv-x86_64-2*.7z" --dir "$env:RUNNER_TEMP"
+          $archive = Get-ChildItem "$env:RUNNER_TEMP\mpv-x86_64-*.7z" | Select-Object -First 1
+          Write-Host "mpv build: $($archive.Name)"
+          7z x $archive.FullName "-o$env:RUNNER_TEMP\mpv" -y | Out-Null
+          Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\mpv"
+
+      - run: mpv --version
+      - run: uv run --frozen pytest -v -rs
