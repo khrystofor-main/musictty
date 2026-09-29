@@ -58,7 +58,7 @@ def mpv_command(mpv: str, address: str, spec: LaunchSpec) -> list[str]:
     ]
     if spec.loop_file:
         args.append("--loop-file=inf")
-    if spec.queue is not None:
+    if spec.loops:
         args.append("--loop-playlist=inf")  # the liked playlist starts over at the end
     ytdlp = find_ytdlp()
     if ytdlp:

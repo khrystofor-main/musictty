@@ -32,7 +32,9 @@ in the user runtime dir elsewhere). Its clients:
 - `tui.py` — the Textual UI, opened by the bare `musictty` (without a terminal it prints
   the recent radios instead). It observes mpv's properties and the radio's list, keeps
   reconnecting as radios come and go, and quitting it leaves the music playing. Keys in
-  the lists follow v0's menus (enter, ←/→, delete).
+  the lists follow v0's menus (enter, ←/→, delete). The Search tab lists songs, albums and
+  artists (`music.py`); an album plays as a queue that turns into a radio
+  (`LaunchSpec.then_radio`: no mixes until its last track, then a normal radio).
 - `daemon.py` + `radio.py` — the background process (`python -m musictty.daemon`, a
   `LaunchSpec` as JSON on stdin). It starts mpv, and `Radio` is the port of
   `youtube-music.lua`: refills from the mix, prefetches the next track to a direct
@@ -40,7 +42,8 @@ in the user runtime dir elsewhere). Its clients:
   It exits when mpv quits.
 
 Other modules: `control.py` (start/stop a radio, volume, repeat: shared by CLI and UI),
-`ipc.py` (async JSON IPC client), `player.py` (find/launch/stop mpv, spawn
+`music.py` (ytmusicapi: search, albums, artists' top songs; yt-dlp's search only gives bare
+ids for albums and artists), `ipc.py` (async JSON IPC client), `player.py` (find/launch/stop mpv, spawn
 the daemon), `youtube.py` (yt-dlp as a library; blocking, run in a thread),
 `store.py` (data files, v0 import), `paths.py`, `mpv.conf`.
 
@@ -82,7 +85,8 @@ Python: `uv run pytest` and `uv run ruff check src tests && uv run ruff format -
   with a real mpv.
 - `tests/test_player.py` uses a real silent mpv (`MUSICTTY_MPV_ARGS=--ao=null`) and local
   WAV files instead of YouTube; skipped when mpv is missing.
-- YouTube may be unreachable from the sandbox: yt-dlp calls are tested with fakes.
+- YouTube may be unreachable from the sandbox: yt-dlp and ytmusicapi calls are tested with
+  fakes shaped like their documented results.
 - CI (`.github/workflows/tests.yml`) runs lint and the tests on Windows and Ubuntu, with a
   real mpv on both; `MUSICTTY_REQUIRE_MPV=1` turns a missing mpv into a failure there.
   This is where the Windows code actually gets exercised.

@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from fakes import FakeMpv, FakeSource, parse_options, tid
 
+from musictty import player
 from musictty import radio as radio_module
 from musictty.models import Track
 from musictty.radio import (
@@ -248,3 +249,38 @@ def test_a_late_file_loaded_is_about_the_entry_that_loaded(store):
 
     run(scenario())
     assert [t.id for t in store.recent_plays()] == [S]
+
+
+def test_album_plays_in_order_then_turns_into_a_radio(store):
+    source = FakeSource({C: [C, D, E]})
+    queue = [Track(S, "s"), Track(A, "a"), Track(B, "b"), Track(C, "c")]
+    spec = LaunchSpec(seed=S, stream=source.stream(S), queue=queue, source="album", then_radio=True)
+    assert LaunchSpec.from_json(spec.to_json()) == spec
+    assert not spec.loops
+
+    async def scenario():
+        mpv, radio = await started(spec, source, store)
+        for i in range(3):
+            await load(mpv, radio, i)
+        assert source.mixed == []  # no mixes while the album plays
+        assert mpv.props[SOURCE_PROPERTY] == "album"
+        await load(mpv, radio, 3)  # its last track: the radio starts from it
+        assert source.mixed == [C]
+        await load(mpv, radio, 4)
+        return mpv, radio
+
+    mpv, radio = run(scenario())
+    # the album's tracks are not queued again
+    assert [radio.video_id(f) for f in mpv.filenames()] == [S, A, B, C, D, E]
+    assert mpv.props[SOURCE_PROPERTY] == "radio mix"
+    assert store.recent_seeds() == []  # an album is not a radio seed
+
+
+def test_only_the_liked_playlist_loops():
+    queue = [Track(S, "s"), Track(A, "a")]
+    liked = LaunchSpec(seed=S, queue=queue)
+    album = LaunchSpec(seed=S, queue=queue, then_radio=True)
+    assert liked.loops
+    assert "--loop-playlist=inf" in player.mpv_command("mpv", "addr", liked)
+    assert "--loop-playlist=inf" not in player.mpv_command("mpv", "addr", album)
+    assert "--loop-playlist=inf" not in player.mpv_command("mpv", "addr", LaunchSpec(seed=S))

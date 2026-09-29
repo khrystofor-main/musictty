@@ -55,9 +55,13 @@ command line. Its command is `musictty`, so it doesn't clash with v0's `music`.
    (finds v0 on `PATH`, or pass its folder).
 
 `musictty` on its own opens the player: what's playing, the current radio, recent
-radios, history and liked tracks, and search on `/`. Keys: `space` pause, `n`/`p` next and
-previous, `+`/`-` volume, `l` like, `r` repeat, `s` stop, `1`–`4` tabs, `q` quit (the music
-keeps playing). In the lists, `enter` starts a radio from a track, and the arrows work as
+radios, history, liked tracks and search. Keys: `space` pause, `n`/`p` next and
+previous, `+`/`-` volume, `l` like, `r` repeat, `s` stop, `1`–`5` tabs, `q` quit (the music
+keeps playing).
+
+Search (`/`) finds songs, albums and artists on YouTube Music: a song starts a radio, an
+album plays in order and then turns into a radio from its last track, an artist shows
+their top songs (`←` goes back to the results). In the lists, `enter` starts a radio from a track, and the arrows work as
 in v0's menus: `←` jumps back in the current radio; in liked, `→` plays them in a loop and
 `←` does the same with that track on repeat, `delete` removes it.
 
@@ -101,7 +105,8 @@ list the background process publishes there.
 - [x] v0: background radio, history, likes (PowerShell + mpv + Lua)
 - [x] Python rewrite, cross-platform: background radio, history, likes, command line
 - [x] Terminal UI ([Textual](https://textual.textualize.io/)): player, radios, history, likes, search
-- [ ] Rich search: albums, artists, playlists; lyrics
+- [x] Rich search: songs, albums, artists
+- [ ] Playlists and lyrics
 - [ ] AI radio: describe a mood in plain words, and Claude builds the queue
 - [ ] Album art in the terminal
 
