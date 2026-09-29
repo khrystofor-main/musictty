@@ -5,7 +5,8 @@ similar music in the background: it follows the track's mix, prefetches the next
 songs, and never stops until you tell it to.
 
 > **Status: v0 prototype (Windows, PowerShell).** A cross-platform Python rewrite
-> with a full terminal UI is in progress, see [Roadmap](#roadmap).
+> is in progress: the background radio and the command line already work, a full
+> terminal UI is next, see [Python version](#python-version-preview) and [Roadmap](#roadmap).
 
 ## What it does
 
@@ -39,6 +40,34 @@ musictty looks for `mpv.exe` in `PATH`, `%ProgramFiles%\MPV Player` and
 `%LOCALAPPDATA%\Programs\mpv`. A local yt-dlp build in a `yt-dlp/` folder next to
 the scripts takes priority over the system one.
 
+## Python version (preview)
+
+The cross-platform rewrite (Windows, macOS, Linux) already plays radios from the
+command line. Its command is `musictty`, so it doesn't clash with v0's `music`.
+
+1. Install [mpv](https://mpv.io/installation/) 0.37 or newer.
+2. Install musictty with [uv](https://docs.astral.sh/uv/):
+   ```sh
+   uv tool install git+https://github.com/khrystofor-main/musictty
+   ```
+   yt-dlp and the Deno runtime it needs for YouTube come along.
+3. Optionally bring over v0's radios, history and likes: `musictty import-v0`
+   (finds v0 on `PATH`, or pass its folder).
+
+`musictty` on its own opens the player: what's playing, the current radio, recent
+radios, history and liked tracks, and search on `/`. Keys: `space` pause, `n`/`p` next and
+previous, `+`/`-` volume, `l` like, `r` repeat, `s` stop, `1`–`4` tabs, `q` quit (the music
+keeps playing). In the lists, `enter` starts a radio from a track, and the arrows work as
+in v0's menus: `←` jumps back in the current radio; in liked, `→` plays them in a loop and
+`←` does the same with that track on repeat, `delete` removes it.
+
+The v0 commands work too, with numbers instead of menus: `musictty history` prints a
+numbered list, `musictty history 3` starts a radio from track 3. Run `musictty help` for
+the full list.
+
+Listening data is kept in your user data folder (`%LOCALAPPDATA%\musictty`,
+`~/.local/share/musictty` or `~/Library/Application Support/musictty`).
+
 ## How it works
 
 ```text
@@ -56,10 +85,22 @@ music.cmd / music.ps1
 Listening data (`history.txt`, `play-history.txt`, `liked.txt`) is stored as plain
 text next to the scripts and never leaves your machine.
 
+The Python version keeps the same idea, with the radio logic moved from Lua to Python:
+
+```text
+musictty <command>  ──┐                    ┌── musictty.daemon (background)
+  (short-lived CLI)   │   JSON IPC         │   refills the queue from the mix,
+                      └──►  mpv (hidden) ◄─┘   prefetches ahead, writes history
+```
+
+mpv is the hub: the CLI sends playback commands straight to it and reads the track
+list the background process publishes there.
+
 ## Roadmap
 
 - [x] v0: background radio, history, likes (PowerShell + mpv + Lua)
-- [ ] Python rewrite with a terminal UI ([Textual](https://textual.textualize.io/)), cross-platform
+- [x] Python rewrite, cross-platform: background radio, history, likes, command line
+- [x] Terminal UI ([Textual](https://textual.textualize.io/)): player, radios, history, likes, search
 - [ ] Rich search: albums, artists, playlists; lyrics
 - [ ] AI radio: describe a mood in plain words, and Claude builds the queue
 - [ ] Album art in the terminal

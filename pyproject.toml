@@ -1,0 +1,39 @@
+[project]
+name = "musictty"
+version = "0.1.0.dev0"
+description = "Endless music radio in your terminal"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "platformdirs>=4",
+    "textual>=8.2.8",
+    "yt-dlp[default,deno]",
+]
+
+[project.scripts]
+musictty = "musictty.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/musictty"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
