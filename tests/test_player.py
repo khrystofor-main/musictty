@@ -3,6 +3,7 @@
 import asyncio
 import os
 import shutil
+import sys
 import time
 import wave
 
@@ -142,3 +143,14 @@ def test_background_radio_starts_replaces_and_stops(files, monkeypatch, capsys):
 
     assert cli.main(["stop"]) == 0
     assert not asyncio.run(player.is_running(paths.ipc_address()))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="console windows are a Windows thing")
+def test_background_process_has_no_console_window(tmp_path):
+    # the venv's python.exe is a launcher that starts the real interpreter as a child:
+    # that child must not get a console window of its own
+    code = "import ctypes; print(ctypes.windll.kernel32.GetConsoleWindow())"
+    log = tmp_path / "console.log"
+    proc = player.spawn_background([sys.executable, "-c", code], b"", log)
+    assert proc.wait(timeout=30) == 0
+    assert log.read_text().strip() == "0"

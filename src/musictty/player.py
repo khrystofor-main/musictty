@@ -94,8 +94,8 @@ def launch_mpv(spec: LaunchSpec, address: str) -> subprocess.Popen:
     )
 
 
-def spawn_radio(spec: LaunchSpec, log_path: Path) -> subprocess.Popen:
-    """Start the background radio (python -m musictty.daemon), detached from the terminal."""
+def spawn_background(args: list[str], stdin: bytes, log_path: Path) -> subprocess.Popen:
+    """Start a process detached from the terminal: stdin from `stdin`, output to the log."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict = {}
     if WINDOWS:
@@ -104,16 +104,18 @@ def spawn_radio(spec: LaunchSpec, log_path: Path) -> subprocess.Popen:
         kwargs["start_new_session"] = True
     with open(log_path, "wb") as log:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "musictty.daemon"],
-            stdin=subprocess.PIPE,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            **kwargs,
+            args, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, **kwargs
         )
     assert proc.stdin
-    proc.stdin.write(spec.to_json().encode())
+    proc.stdin.write(stdin)
     proc.stdin.close()
     return proc
+
+
+def spawn_radio(spec: LaunchSpec, log_path: Path) -> subprocess.Popen:
+    """Start the background radio (python -m musictty.daemon)."""
+    args = [sys.executable, "-m", "musictty.daemon"]
+    return spawn_background(args, spec.to_json().encode(), log_path)
 
 
 async def wait_connect(address: str, alive: Callable[[], bool], timeout: float = 10.0) -> Mpv:
