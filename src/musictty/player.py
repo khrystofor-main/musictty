@@ -99,7 +99,10 @@ def spawn_background(args: list[str], stdin: bytes, log_path: Path) -> subproces
     log_path.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict = {}
     if WINDOWS:
-        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        # a hidden console, not none at all (DETACHED_PROCESS): the venv's python.exe is a
+        # launcher that starts the real interpreter as a child, and a child of a process
+        # without a console opens a console window of its own
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
     with open(log_path, "wb") as log:
