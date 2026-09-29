@@ -78,11 +78,19 @@ def test_radio_and_commands_on_a_real_player(files, capsys):
         async def prefetched(video_id):
             return files[video_id] in [e["filename"] for e in await mpv.get("playlist")]
 
+        async def played(*ids):
+            # a track counts once it has loaded: the radio logs it on file-loaded
+            return [t.id for t in store.recent_plays()] == list(ids)
+
+        # wait for each track to load before the next step: pressing next while a track
+        # is still loading skips it for good (it never played, so it's not in the history)
+        await until(lambda: played(S))
         await until(lambda: prefetched(A))
         assert await current() == S
         assert await command("now") == (0, f"{source.title(S)} · radio mix\n")
 
         assert await command("next") == (0, "")
+        await until(lambda: played(A, S))
         await until(lambda: prefetched(B))
         assert await current() == A
         assert await command("list") == (0, f" 1. ▶ {source.title(A)}\n 2.   {source.title(S)}\n")
@@ -99,18 +107,14 @@ def test_radio_and_commands_on_a_real_player(files, capsys):
         assert await command("play") == (0, "")
 
         assert await command("list", "back", "2") == (0, "")
-
-        async def back_on_seed():
-            return await current() == S
-
-        await until(back_on_seed)
+        await until(lambda: played(S, A, S))
+        assert await current() == S
 
         assert await command("stop") == (0, "")
         await asyncio.wait_for(task, 5)  # the radio ends with its player
         assert proc.wait(timeout=5) == 0
 
     asyncio.run(scenario())
-    assert [t.id for t in store.recent_plays()] == [S, A, S]
     assert store.liked() == [Track(A, source.title(A))]
     assert store.recent_seeds() == [Track(S, source.title(S))]
     assert store.settings().volume == 65
