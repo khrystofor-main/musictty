@@ -14,9 +14,10 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Vertical
 from textual.widgets import Footer, Input, OptionList, ProgressBar, Static, TabbedContent, TabPane
 
-from . import control, paths
+from . import control, paths, player
 from .control import Failure
 from .ipc import Mpv, MpvError, NotRunning
 from .models import Track
@@ -70,9 +71,11 @@ def row_title(row: Any) -> str:
 
 class MusicApp(App):
     TITLE = "musictty"
+    ENABLE_COMMAND_PALETTE = False
     CSS = """
-    #now { padding: 1 2 0 2; height: auto; }
-    #progress { padding: 0 2 1 2; }
+    #player { height: auto; padding: 1 2; }
+    #now { height: auto; }
+    #progress { width: 1fr; }
     #progress Bar { width: 1fr; }
     TabbedContent { height: 1fr; }
     TrackList { height: 1fr; border: none; }
@@ -105,8 +108,9 @@ class MusicApp(App):
         self.liked_ids: set[str] = set()  # refreshed with the lists
 
     def compose(self) -> ComposeResult:
-        yield Static(id="now")
-        yield ProgressBar(id="progress", show_eta=False, show_percentage=False)
+        with Vertical(id="player"):
+            yield Static(id="now")
+            yield ProgressBar(id="progress", show_eta=False, show_percentage=False)
         with TabbedContent(initial="radio"):
             for n, (tab, title) in enumerate(TABS.items(), 1):
                 with TabPane(f"{n} {title}", id=tab):
@@ -114,10 +118,12 @@ class MusicApp(App):
         yield Input(placeholder="/ search YouTube Music, enter starts a radio", id="search")
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.render_now()
         self.refresh_lists()
-        self.track_list("radio").focus()
+        # nothing playing: start where v0's bare `music` did, on the recent radios
+        playing = await player.is_running(paths.ipc_address())
+        self.action_tab("radio" if playing else "recent")
         self.run_worker(self.watch_player(), group="player")
         self.set_interval(1, self.poll_position)
 
@@ -193,7 +199,7 @@ class MusicApp(App):
         volume = self.props.get("volume")
         if volume is not None:
             details.append(f"vol {round(volume)}")
-        state = "⏸ " if self.props.get("pause") else "▶ "
+        state = "‖ " if self.props.get("pause") else "▶ "  # ⏸ is missing from many fonts
         now.update(Text.assemble((state + title, "bold"), "\n", (" · ".join(details), "dim")))
         progress.display = bool(duration)
         if duration:

@@ -4,7 +4,7 @@ Endless background music radio for the terminal. Two versions live side by side:
 - **v0** — the Windows-only PowerShell prototype in the repo root. Still in daily use
   (its folder is on the developer's PATH as `music`): don't move or break it.
 - **Python version** — the cross-platform rewrite in `src/musictty/`, command `musictty`.
-  Core radio and CLI are done; a Textual TUI is next (see README roadmap).
+  Core radio, CLI and a first Textual UI are done (see README roadmap).
 
 ## Architecture (v0)
 
@@ -25,17 +25,22 @@ Lua script at startup), `volume.txt`, `repeat-on`.
 ## Architecture (Python, `src/musictty/`)
 
 mpv is the hub: it owns the IPC endpoint (`\\.\pipe\musictty` on Windows, a unix socket
-in the user runtime dir elsewhere). Two kinds of clients talk to it:
+in the user runtime dir elsewhere). Its clients:
 - `cli.py` — the `musictty` command, a short-lived process per call. Strict parsing like
   v0; menus are replaced by numbers (`history 3`, `liked play 2`, `list back 1`).
   Playback commands go straight to mpv; `list back` sends `script-message musictty-jump`.
+- `tui.py` — the Textual UI, opened by the bare `musictty` (without a terminal it prints
+  the recent radios instead). It observes mpv's properties and the radio's list, keeps
+  reconnecting as radios come and go, and quitting it leaves the music playing. Keys in
+  the lists follow v0's menus (enter, ←/→, delete).
 - `daemon.py` + `radio.py` — the background process (`python -m musictty.daemon`, a
   `LaunchSpec` as JSON on stdin). It starts mpv, and `Radio` is the port of
   `youtube-music.lua`: refills from the mix, prefetches the next track to a direct
   stream, trims played entries, publishes `user-data/musictty/list` and `.../source`.
   It exits when mpv quits.
 
-Other modules: `ipc.py` (async JSON IPC client), `player.py` (find/launch/stop mpv, spawn
+Other modules: `control.py` (start/stop a radio, volume, repeat: shared by CLI and UI),
+`ipc.py` (async JSON IPC client), `player.py` (find/launch/stop mpv, spawn
 the daemon), `youtube.py` (yt-dlp as a library; blocking, run in a thread),
 `store.py` (data files, v0 import), `paths.py`, `mpv.conf`.
 
@@ -73,6 +78,8 @@ Python: `uv run pytest` and `uv run ruff check src tests && uv run ruff format -
 - Tests isolate themselves via `MUSICTTY_HOME` (data dir) and `MUSICTTY_IPC` (IPC address)
   — see `tests/conftest.py`. Never run the real `musictty` against the real data dir.
 - `tests/test_radio.py` drives the radio with an in-memory mpv (`tests/fakes.py`).
+- `tests/test_tui.py` drives the UI headless with Textual's pilot, with the radio off and
+  with a real mpv.
 - `tests/test_player.py` uses a real silent mpv (`MUSICTTY_MPV_ARGS=--ao=null`) and local
   WAV files instead of YouTube; skipped when mpv is missing.
 - YouTube may be unreachable from the sandbox: yt-dlp calls are tested with fakes.

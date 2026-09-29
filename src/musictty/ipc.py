@@ -80,6 +80,8 @@ class Mpv:
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(MpvError("mpv closed the connection"))
+                    # its waiter may be cancelled at this very moment: don't warn about it
+                    future.exception()
             self._pending.clear()
             self._events.put_nowait(None)
 

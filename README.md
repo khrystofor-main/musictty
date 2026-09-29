@@ -54,9 +54,16 @@ command line. Its command is `musictty`, so it doesn't clash with v0's `music`.
 3. Optionally bring over v0's radios, history and likes: `musictty import-v0`
    (finds v0 on `PATH`, or pass its folder).
 
-The commands are the same as in v0. Until the terminal UI arrives, the arrow-key menus
-are replaced by numbers: `musictty history` prints a numbered list, `musictty history 3`
-starts a radio from track 3. Run `musictty help` for the full list.
+`musictty` on its own opens the player: what's playing, the current radio, recent
+radios, history and liked tracks, and search on `/`. Keys: `space` pause, `n`/`p` next and
+previous, `+`/`-` volume, `l` like, `r` repeat, `s` stop, `1`–`4` tabs, `q` quit (the music
+keeps playing). In the lists, `enter` starts a radio from a track, and the arrows work as
+in v0's menus: `←` jumps back in the current radio; in liked, `→` plays them in a loop and
+`←` does the same with that track on repeat, `delete` removes it.
+
+The v0 commands work too, with numbers instead of menus: `musictty history` prints a
+numbered list, `musictty history 3` starts a radio from track 3. Run `musictty help` for
+the full list.
 
 Listening data is kept in your user data folder (`%LOCALAPPDATA%\musictty`,
 `~/.local/share/musictty` or `~/Library/Application Support/musictty`).
@@ -93,7 +100,7 @@ list the background process publishes there.
 
 - [x] v0: background radio, history, likes (PowerShell + mpv + Lua)
 - [x] Python rewrite, cross-platform: background radio, history, likes, command line
-- [ ] Terminal UI ([Textual](https://textual.textualize.io/))
+- [x] Terminal UI ([Textual](https://textual.textualize.io/)): player, radios, history, likes, search
 - [ ] Rich search: albums, artists, playlists; lyrics
 - [ ] AI radio: describe a mood in plain words, and Claude builds the queue
 - [ ] Album art in the terminal
