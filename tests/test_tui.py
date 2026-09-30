@@ -7,6 +7,7 @@ import wave
 
 import pytest
 from fakes import FakeSource, tid
+from test_music import FakeYTMusic
 from textual.widgets import Static, TabbedContent
 
 from musictty import control, music, paths, player
@@ -107,7 +108,8 @@ def test_search(monkeypatch):
         lambda q: music.Found(songs, albums, artists) if q == "daft punk" else music.Found(),
     )
     monkeypatch.setattr(music, "album", lambda browse_id: ("Daft Punk — Discovery", album))
-    monkeypatch.setattr(music, "artist_songs", lambda browse_id: ("Daft Punk", top))
+    page = music.Page("Daft Punk", sections=[music.Section("Top songs", top)])
+    monkeypatch.setattr(music, "artist", lambda browse_id: page)
     started = []
 
     async def fake_start(seed=None, **kwargs):
@@ -140,8 +142,8 @@ def test_search(monkeypatch):
             await pilot.press("5", "down", "enter")  # an album: in order, then a radio
             await until(pilot, lambda: len(started) == 2)
 
-            await pilot.press("5", "down", "enter")  # an artist: the top songs
-            await until(pilot, lambda: lines(search)[1:] == ["Daft Punk — Around the World"])
+            await pilot.press("5", "down", "enter")  # an artist: their page
+            await until(pilot, lambda: lines(search)[-1] == "Daft Punk — Around the World")
             await pilot.press("left")
             await until(pilot, lambda: lines(search) == results)
             await pilot.press("down", "down", "enter", "escape")  # esc goes back too
@@ -386,3 +388,95 @@ def test_the_queue_with_a_real_player(tmp_path, monkeypatch):
         assert proc.wait(timeout=5) == 0
 
     asyncio.run(scenario())
+
+
+def test_artist_and_album_pages(monkeypatch):
+    monkeypatch.setattr(music, "_client", FakeYTMusic)
+    started = []
+
+    async def fake_start(seed=None, **kwargs):
+        started.append((seed, kwargs))
+
+    monkeypatch.setattr(control, "start", fake_start)
+    album_page = [
+        "Daft Punk — Discovery  (← back)",
+        "Album · 2001 · 14 songs · 1 hour, 1 minute",
+        "",
+        " 1. One More Time  5:20",
+        " 2. Daft Punk, Todd Edwards — Face to Face  4:00",
+        "",
+        "Artist",
+        "Daft Punk",
+    ]
+    artist_page = [
+        "Daft Punk  (← back)",
+        "29.1M monthly audience · 8.2M subscribers",
+        "",
+        "▶ Daft Punk radio",
+        "",
+        "Top songs",
+        "Daft Punk — Around the World  7:09",
+        "all songs  →",
+        "",
+        "Albums",
+        "Daft Punk — Discovery  Album · 2001",
+        "all albums  →",
+        "",
+        "Singles",
+        "Daft Punk — Get Lucky  Single · 2013",
+        "",
+        "Fans might also like",
+        "Justice  1.2M subscribers",
+    ]
+
+    async def scenario():
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            search = app.track_list("search")
+            await pilot.press("slash", *"daft punk", "enter")
+            await until(pilot, lambda: "Albums" in lines(search))
+            results = lines(search)
+            at = results.index("Daft Punk — Discovery  Album · 2001")
+            search.highlighted = at
+            await pilot.press("right")  # → opens the album; enter would play it
+            await until(pilot, lambda: lines(search) == album_page)
+            assert search.highlighted == 3  # on its first track
+            await pilot.press("down", "enter")  # from the second track on, then a radio
+            await until(pilot, lambda: len(started) == 1)
+
+            await pilot.press("5", "down", "enter")  # its artist
+            await until(pilot, lambda: lines(search) == artist_page)
+            await pilot.press("enter")  # the artist's radio
+            await until(pilot, lambda: len(started) == 2)
+
+            await pilot.press("5", "down", "down", "enter")  # all songs
+            await until(
+                pilot, lambda: lines(search)[:2] == ["Daft Punk: songs  (← back)", "2 songs"]
+            )
+            await pilot.press("down", "enter")  # the second song, then the rest after it
+            await until(pilot, lambda: len(started) == 3)
+
+            await pilot.press("5", "left")
+            await until(pilot, lambda: lines(search) == artist_page)
+            search.highlighted = artist_page.index("all albums  →")
+            await pilot.press("right")
+            await until(pilot, lambda: lines(search)[0] == "Daft Punk: albums  (← back)")
+            assert lines(search)[3:] == [
+                "Daft Punk — Discovery  Album · 2001",
+                "Daft Punk — Homework  Album · 1997",
+            ]
+            await pilot.press("escape", "escape")  # esc goes back too
+            await until(pilot, lambda: lines(search) == album_page)
+            await pilot.press("left")
+            await until(pilot, lambda: lines(search) == results)
+            await pilot.press("q")
+
+    asyncio.run(scenario())
+    one_more, face = (
+        Track(S, "Daft Punk — One More Time"),
+        Track(B, "Daft Punk, Todd Edwards — Face to Face"),
+    )
+    assert started[0] == (B, {"queue": [face], "then_radio": True, "source": "album"})
+    radio = [Track(B, "Daft Punk — Around the World"), Track(C, "Justice — D.A.N.C.E.")]
+    assert started[1] == (B, {"queue": radio, "then_radio": True, "source": "artist radio"})
+    assert started[2] == (S, {"queue": [one_more], "then_radio": True, "source": "songs"})

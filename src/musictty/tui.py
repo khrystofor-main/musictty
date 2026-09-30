@@ -25,6 +25,7 @@ from .models import Track
 from .radio import (
     ADD_TO_QUEUE,
     ALBUM,
+    ARTIST_RADIO,
     JUMP_MESSAGE,
     LIST_PROPERTY,
     MOVE_MESSAGE,
@@ -99,6 +100,23 @@ def result_line(result: music.Result) -> Text:
     return Text.assemble(result.title, (f"  {result.detail}" if result.detail else "", "dim"))
 
 
+def page_line(result: music.Result, page: music.Page, n: int | None) -> Text:
+    """A row of an artist's or an album's page."""
+    if result.kind == music.RADIO:
+        return Text.assemble("▶ ", result.title)
+    if result.kind in (music.MORE_SONGS, music.MORE_ALBUMS):
+        return Text.assemble((result.title, "italic"), ("  →", "dim"))
+    if n is None:
+        return result_line(result)
+    # an album's tracks: numbered, without the album's artist in front of each
+    title = result.title.removeprefix(f"{page.artist} — ") if page.artist else result.title
+    return Text.assemble((f"{n:2}. ", "dim"), title, (f"  {result.detail}", "dim"))
+
+
+# rows of the search tab that open a page
+PAGES = {music.ARTISTS, music.ALBUMS, music.MORE_SONGS, music.MORE_ALBUMS}
+
+
 def row_id(row: Any) -> str:
     return (row.get("id") or "") if isinstance(row, dict) else row.id
 
@@ -130,7 +148,7 @@ LIST_KEYS = {
         ("del", "unlike"),
         *QUEUE_KEYS,
     ],
-    "search": [("enter", "play/open"), ("←", "back"), *QUEUE_KEYS],
+    "search": [("enter", "play"), ("→", "open"), ("←", "back"), *QUEUE_KEYS],
     "lyrics": [],
     "upnext": [
         ("enter", "play now"),
@@ -194,8 +212,9 @@ class MusicApp(App):
         self.props: dict[str, Any] = {}
         self.position: float | None = None
         self.liked_ids: set[str] = set()  # refreshed with the lists
-        # the search tab: what an artist's songs replaced, for going back with ←
-        self.search_back: list[tuple[list[Any], list[Any]]] = []
+        # the search tab: the page shown (None: the results) and what it replaced, for ←
+        self.search_page: music.Page | None = None
+        self.search_back: list[tuple[list[Any], list[Any], music.Page | None]] = []
         # the lyrics tab: whose lyrics it shows, and the lyrics already fetched
         self.lyrics_id: str | None = ""  # "" = nothing shown yet; None = nothing playing
         self.lyrics_cache: dict[str, music.Lyrics | None] = {}
@@ -416,10 +435,14 @@ class MusicApp(App):
                 self.run_worker(self.queue_message(REMOVE_MESSAGE, str(row["entry"])))
             case "search", "left":
                 self.search_go_back()
-            case "search", "enter" | "right" if row.kind == music.ALBUMS:
+            case "search", "enter" if row.kind == music.ALBUMS:
                 self.run_worker(self.play_album(row), group="launch", exclusive=True)
-            case "search", "enter" | "right" if row.kind == music.ARTISTS:
-                self.run_worker(self.show_artist(row), group="search", exclusive=True)
+            case "search", "enter" | "right" if row.kind in PAGES:
+                self.run_worker(self.open_page(row), group="search", exclusive=True)
+            case "search", "enter" | "right" if row.kind == music.RADIO:
+                self.run_worker(self.artist_radio(row), group="launch", exclusive=True)
+            case "search", "enter" | "right" if row.kind == music.SONGS and self.plays_as():
+                self.play_from(lst, i, self.plays_as())
             case "radio", "left":
                 # jump back here, keeping the queue
                 if not row.get("current"):
@@ -452,7 +475,7 @@ class MusicApp(App):
                     move = (MOVE_MESSAGE, str(row["entry"]), "before", str(first["entry"]))
                     self.run_worker(self.queue_message(*move))
             return
-        if isinstance(row, music.Result) and row.kind == music.ARTISTS:
+        if isinstance(row, music.Result) and row.kind not in (music.SONGS, music.ALBUMS):
             return
         self.run_worker(self.enqueue(row, where))
 
@@ -699,6 +722,7 @@ class MusicApp(App):
 
     async def find(self, query: str) -> None:
         self.search_back.clear()
+        self.search_page = None
         self.show_search([None], [heading(f"searching «{query}»…")])
         try:
             found = await asyncio.to_thread(music.search, query)
@@ -724,24 +748,75 @@ class MusicApp(App):
             rows, options = [None], [heading(f"nothing found: «{query}»")]
         self.show_search(rows, options)
 
-    async def show_artist(self, artist: music.Result) -> None:
-        lst = self.track_list("search")
-        before = (lst.rows, [lst.get_option_at_index(i) for i in range(lst.option_count)])
+    async def open_page(self, row: music.Result) -> None:
+        """An artist's or an album's page, or all of an artist's songs or albums."""
+        name = self.search_page.title if self.search_page else ""
+        loaders: dict[str, Any] = {
+            music.ARTISTS: lambda: music.artist(row.id),
+            music.ALBUMS: lambda: music.album_page(row.id),
+            music.MORE_SONGS: lambda: music.artist_songs(row.id, name),
+            music.MORE_ALBUMS: lambda: music.artist_albums(
+                row.id, row.params, name, row.title.removeprefix("all ")
+            ),
+        }
+        self.notify(f"opening {row.title}…", timeout=2)
         try:
-            name, songs = await asyncio.to_thread(music.artist_songs, artist.id)
+            page = await asyncio.to_thread(loaders[row.kind])
         except Exception:
-            self.notify(f"could not open {artist.title}", severity="error")
+            self.notify(f"could not open {row.title}", severity="error")
             return
-        if not songs:
-            self.notify(f"no songs of {artist.title}")
+        if not any(section.results for section in page.sections):
+            self.notify(f"nothing on {row.title}")
             return
-        self.search_back.append(before)
-        header = heading(f"{name or artist.title}: top songs  (← back)")
-        self.show_search([None, *songs], [header, *map(result_line, songs)])
+        lst = self.track_list("search")
+        options = [lst.get_option_at_index(i) for i in range(lst.option_count)]
+        self.search_back.append((lst.rows, options, self.search_page))
+        self.search_page = page
+        rows: list[Any] = [None]
+        lines: list[Any] = [heading(f"{page.title}  (← back)")]
+        if page.detail:
+            rows.append(None)
+            lines.append(Option(Text(page.detail, style="dim"), disabled=True))
+        for section in page.sections:
+            rows.append(None)
+            lines.append(Option("", disabled=True))
+            if section.title:
+                rows.append(None)
+                lines.append(heading(section.title))
+            for n, result in enumerate(section.results, 1):
+                rows.append(result)
+                lines.append(page_line(result, page, n if section.numbered else None))
+        self.show_search(rows, lines)
+
+    def plays_as(self) -> str:
+        return self.search_page.plays_as if self.search_page else ""
 
     def search_go_back(self) -> None:
         if self.search_back:
-            self.show_search(*self.search_back.pop())
+            rows, options, self.search_page = self.search_back.pop()
+            self.show_search(rows, options)
+
+    def play_from(self, lst: TrackList, i: int, source: str) -> None:
+        """A song on an album's page (or a list of songs): the rest of them from it, then a
+        radio, as YouTube Music plays an album from a track."""
+        tracks = music.tracks([row for row in lst.rows[i:] if row])
+        self.launch(tracks[0].id, tracks[0].title, queue=tracks, then_radio=True, source=source)
+
+    async def artist_radio(self, row: music.Result) -> None:
+        self.notify(f"starting {row.title}…", timeout=3)
+        try:
+            tracks = await asyncio.to_thread(music.artist_radio, row.id)
+        except Exception:
+            tracks = []
+        if not tracks:
+            self.notify(f"could not start {row.title}", severity="error")
+            return
+        try:
+            await control.start(tracks[0].id, queue=tracks, then_radio=True, source=ARTIST_RADIO)
+        except Failure as e:
+            self.notify(str(e), severity="error")
+            return
+        self.action_tab("radio")
 
     async def play_album(self, album: music.Result) -> None:
         """The album in order, then a radio from its last track."""
