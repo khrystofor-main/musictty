@@ -183,6 +183,35 @@ class FakeYTMusic:
             "zzz": [],
         }[query]
 
+    def get_home(self, limit=3):
+        assert limit == 6
+        return [
+            {
+                "title": "Quick picks",
+                "contents": [
+                    {"title": "Gravity", "videoId": A, "thumbnails": [],
+                     "artists": [{"name": "yetep", "id": "UCyetep"}],
+                     "album": {"name": "Gravity", "id": "MPREb_gravity"}},
+                    # a watch playlist: a radio
+                    {"title": "Chill mix", "playlistId": "RDCLAKmix", "thumbnails": []},
+                ],
+            },
+            {
+                "title": "Your favorites",
+                "contents": [
+                    {"title": "Chill Satellite", "browseId": "UCsat", "subscribers": "374",
+                     "thumbnails": []},
+                    {"title": "Dragon", "year": "2019", "browseId": "MPREb_dragon",
+                     "thumbnails": []},
+                    {"title": "r/EDM top", "playlistId": "PLedm", "thumbnails": [],
+                     "description": "redditEDM • 161 songs", "count": "161",
+                     "author": [{"name": "redditEDM", "id": "UCedm"}]},
+                    {"title": "A podcast", "browseId": "MPSPPLpod"},  # not music: left out
+                ],
+            },
+            {"title": "Empty", "contents": []},
+        ]  # fmt: skip
+
     def get_explore(self):
         return {
             "new_releases": [
@@ -266,7 +295,7 @@ class FakeYTMusic:
                     "year": "2001",
                 }
             return {"tracks": [first], "playlistId": "RDAMVM" + videoId, "lyrics": None}
-        assert playlistId == "RDEMdp"
+        assert playlistId in ("RDEMdp", "RDCLAKmix")  # an artist's radio, a radio of Home
         tracks = [
             {"videoId": B, "title": "Around the World", "length": "7:09",
              "artists": [{"name": "Daft Punk", "id": "UCdp"}]},
@@ -390,8 +419,24 @@ def test_playlist():
 
 def test_explore():
     page = music.explore()
-    assert page.title == "Explore"
+    assert page.title == "Home"
     assert [(s.title, s.results) for s in page.sections] == [
+        # Home's rows first, as they come
+        (
+            "Quick picks",
+            [
+                Result(SONGS, A, "yetep — Gravity"),
+                Result(RADIO, "RDCLAKmix", "Chill mix", params="radio"),
+            ],
+        ),
+        (
+            "Your favorites",
+            [
+                Result(ARTISTS, "UCsat", "Chill Satellite", "374 subscribers"),
+                Result(ALBUMS, "MPREb_dragon", "Dragon", "Album · 2019"),
+                Result(PLAYLISTS, "VLPLedm", "r/EDM top", "redditEDM · 161 songs"),
+            ],
+        ),
         ("New releases", [Result(ALBUMS, "MPREb_new", "Dept — Hangang", "Album")]),
         (
             "Trending",
@@ -416,7 +461,8 @@ def test_explore_keeps_what_loaded(monkeypatch):
             raise ConnectionError
 
     monkeypatch.setattr(music, "_client", Half)
-    assert [s.title for s in music.explore().sections] == ["Moods & moments", "Genres"]
+    titles = [s.title for s in music.explore().sections]
+    assert titles == ["Quick picks", "Your favorites", "Moods & moments", "Genres"]
 
 
 def test_mood_playlists():

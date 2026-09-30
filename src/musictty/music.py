@@ -19,11 +19,13 @@ from .radio import PLAYLIST as PLAYLIST_SOURCE
 from .youtube import display_title, is_video_id
 
 PLAYLIST_LIMIT = 200  # tracks read from a playlist
+HOME_ROWS = 6  # rows of Home, before Explore's
+RADIO_LABEL = "radio"  # the source a radio of Home plays as
 # the country of the charts (ISO 3166-1 alpha-2); ZZ is the whole world
 CHARTS_COUNTRY = os.environ.get("MUSICTTY_CHARTS", "ZZ").upper()
 
 SONGS, ALBUMS, ARTISTS, PLAYLISTS = "song", "album", "artist", "playlist"
-RADIO = "radio"  # an artist's radio: id is its playlist id
+RADIO = "radio"  # an artist's radio, a mix of Home: id is its playlist id, params its label
 MORE_SONGS = "more songs"  # a longer list of songs: id is its playlist's browse id
 MORE_ALBUMS = "more albums"  # all albums or singles: id is the channel id, with params
 MOODS = "mood"  # a mood or a genre of Explore: id is its params
@@ -265,9 +267,25 @@ def artist_albums(channel_id: str, params: str, name: str, title: str) -> Page:
     return Page(f"{name}: {title}", f"{len(albums)} releases", [Section("", albums)])
 
 
+def _home_item(item: dict) -> Result | None:
+    """A row of Home mixes songs, albums, artists, playlists and radios."""
+    browse_id = item.get("browseId") or ""
+    if item.get("videoId"):
+        return _song(item)
+    if browse_id.startswith("MPRE"):
+        return _album(item)
+    if browse_id.startswith("UC"):
+        return _artist(item)
+    if item.get("playlistId") and "owned" not in item and "author" not in item:
+        # a watch playlist: a radio of YouTube Music's, played like an artist's
+        return Result(RADIO, item["playlistId"], item.get("title") or "radio", params=RADIO_LABEL)
+    return _playlist(item) if item.get("playlistId") else None
+
+
 def explore() -> Page:
-    """YouTube Music's Explore without an account: new releases, trending songs, the charts,
-    moods and genres. Three requests at once; a part that fails is left out."""
+    """YouTube Music's Home and Explore without an account: Home's rows (quick picks and the
+    like), new releases, trending songs, the charts, moods and genres. Four requests at once;
+    a part that fails is left out."""
 
     def get(method: str, *args: Any) -> Any:
         try:
@@ -275,12 +293,17 @@ def explore() -> Page:
         except Exception:
             return {}
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        home_f = pool.submit(get, "get_home", HOME_ROWS)
         explore_f = pool.submit(get, "get_explore")
         charts_f = pool.submit(get, "get_charts", CHARTS_COUNTRY)
         moods_f = pool.submit(get, "get_mood_categories")
-        data, charts, moods = explore_f.result(), charts_f.result(), moods_f.result()
-    page = Page("Explore")
+        home, data = home_f.result(), explore_f.result()
+        charts, moods = charts_f.result(), moods_f.result()
+    page = Page("Home")
+    for row in home if isinstance(home, list) else []:
+        if isinstance(row, dict) and row.get("title"):
+            page.sections.append(Section(row["title"], _parsed(row.get("contents"), _home_item)))
     page.sections.append(Section("New releases", _parsed(data.get("new_releases"), _album)))
     for key, title in (("top_songs", "Top songs"), ("trending", "Trending")):
         shelf = data.get(key) or {}

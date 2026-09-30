@@ -75,7 +75,7 @@ TABS = {
     "lyrics": "Lyrics",
     "upnext": "Up next",
     "playlists": "Playlists",
-    "explore": "Explore",
+    "explore": "Home",
 }
 NEW_PLAYLIST = "+ new playlist"  # the first row of the playlists tab
 SEEK_STEP = 10  # seconds
@@ -1170,14 +1170,14 @@ class MusicApp(App):
 
     async def load_explore(self) -> None:
         lst = self.track_list("explore")
-        lst.reset([None], [heading("loading explore…")])
+        lst.reset([None], [heading("loading home…")])
         try:
             page = await asyncio.to_thread(music.explore)
         except Exception:
             page = music.Page("Explore")
         if not page.sections:
             self.explore_loaded = False  # the next visit tries again
-            lst.reset([None], [heading("could not load explore: open the tab again to retry")])
+            lst.reset([None], [heading("could not load home: open the tab again to retry")])
             return
         lst.reset(*page_rows(page, back=False))
 
@@ -1222,7 +1222,8 @@ class MusicApp(App):
             self.notify(f"could not start {row.title}", severity="error")
             return
         try:
-            await control.start(tracks[0].id, queue=tracks, then_radio=True, source=ARTIST_RADIO)
+            source = row.params or ARTIST_RADIO
+            await control.start(tracks[0].id, queue=tracks, then_radio=True, source=source)
         except Failure as e:
             self.notify(str(e), severity="error")
             return
