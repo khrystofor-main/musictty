@@ -38,7 +38,8 @@ in the user runtime dir elsewhere). Its clients:
   (`LaunchSpec.then_radio`: no mixes until it has played out, then a normal radio). Artists
   and albums open as pages (`music.Page`: a title, a detail line, sections of `Result`s) in
   the same tab, stacked on the list (`TrackList.push/pop`) for ←. The Explore tab is the same
-  kind of list (`BROWSERS`), filled once by `music.explore()`. The Playlists tab lists your playlists (or
+  kind of list (`BROWSERS`), filled once by `music.explore()`. Typing a search shows
+  `music.suggestions` in `#suggestions` above the input (debounced, cached per text). The Playlists tab lists your playlists (or
   the one open); `S` saves any row's tracks to one through `dialogs.Pick`. Modal dialogs
   (a name, a pick, yes/no) are in `dialogs.py`. The
   Lyrics tab loads the playing track's lyrics (`music.lyrics`, cached) while it is open and
@@ -108,6 +109,8 @@ Python: `uv run pytest` and `uv run ruff check src tests && uv run ruff format -
   with a real mpv.
 - `tests/test_player.py` uses a real silent mpv (`MUSICTTY_MPV_ARGS=--ao=null`) and local
   WAV files instead of YouTube; skipped when mpv is missing.
+- `tests/conftest.py` makes ytmusicapi unreachable (`music._client` raises): a test that
+  needs YouTube Music puts a fake client in its place (`test_music.FakeYTMusic`).
 - YouTube and the AI APIs may be unreachable from the sandbox: yt-dlp and ytmusicapi calls
   are tested with fakes shaped like their documented results, the AI with a local fake
   OpenAI-compatible server (`tests/test_ai.py`).

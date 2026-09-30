@@ -147,6 +147,12 @@ def search(query: str, limit: int = 8) -> Found:
     return found
 
 
+def suggestions(query: str, limit: int = 8) -> list[str]:
+    """What YouTube Music suggests while a search is typed."""
+    found = _client().get_search_suggestions(query)
+    return [text for text in found or [] if isinstance(text, str) and text.strip()][:limit]
+
+
 def find_songs(queries: list[str]) -> list[Track]:
     """The first song found for each query, in their order; misses and repeats are skipped."""
 

@@ -166,6 +166,23 @@ class FakeYTMusic:
              "year": "1997", "thumbnails": []},
         ]  # fmt: skip
 
+    def get_search_suggestions(self, query, detailed_runs=False):
+        assert not detailed_runs
+        return {
+            "fade": [
+                "faded",
+                "faded alan walker lyrics",
+                "faded alan walker",
+                "faded remix",
+                "faded song",
+                "faded lyrics",
+                "faded instrumental",
+                "faded 1 hour",
+                "faded slowed",
+            ],
+            "zzz": [],
+        }[query]
+
     def get_explore(self):
         return {
             "new_releases": [
@@ -397,6 +414,21 @@ def test_mood_playlists():
         Result(PLAYLISTS, "VLRDCLAKchill", "Chill Hits", "Playlist • YouTube Music"),
         Result(PLAYLISTS, "VLPLfrench", "Lo-fi", "Someone · 50 songs"),
     ]
+
+
+def test_suggestions():
+    assert music.suggestions("fade") == [
+        "faded",
+        "faded alan walker lyrics",
+        "faded alan walker",
+        "faded remix",
+        "faded song",
+        "faded lyrics",
+        "faded instrumental",
+        "faded 1 hour",
+    ]
+    assert music.suggestions("fade", limit=2) == ["faded", "faded alan walker lyrics"]
+    assert music.suggestions("zzz") == []
 
 
 def test_artist_radio():

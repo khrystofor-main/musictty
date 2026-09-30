@@ -237,6 +237,9 @@ LIST_KEYS = {
 }
 APP_KEYS = [("/", "search"), ("a", "ai radio"), ("q", "quit")]
 INPUT_KEYS = [("enter", "go"), ("esc", "back")]
+SEARCH_KEYS = [("enter", "search"), ("↓", "suggestions"), ("esc", "back")]
+SUGGESTION_KEYS = [("enter", "search this"), ("esc", "back to typing")]
+SUGGEST_AFTER = 0.25  # seconds of no typing before suggestions are asked for
 
 
 def key_line(keys: list[tuple[str, str]]) -> str:
@@ -254,6 +257,7 @@ class MusicApp(App):
     TabbedContent { height: 1fr; }
     TrackList { height: 1fr; border: none; }
     #search { margin: 0 1; }
+    #suggestions { height: auto; max-height: 8; margin: 0 2; border: none; display: none; }
     #keys { height: auto; padding: 0 1; background: $footer-background; }
     """
 
@@ -279,6 +283,7 @@ class MusicApp(App):
         Binding("a", "ai", "ai radio"),
         Binding("q", "quit", "quit"),
         Binding("escape", "back", show=False),
+        Binding("down", "suggestions", show=False),
         Binding("left", "row('left')", show=False),
         Binding("right", "row('right')", show=False),
         Binding("delete", "row('delete')", show=False),
@@ -292,6 +297,7 @@ class MusicApp(App):
         self.position: float | None = None
         self.liked_ids: set[str] = set()  # refreshed with the lists
         self.explore_loaded = False  # the explore tab loads when it's first opened
+        self.suggestion_cache: dict[str, list[str]] = {}
         # the playlists tab: the playlist open in it, None for the list of them
         self.playlist_open: str | None = None
         # the lyrics tab: whose lyrics it shows, and the lyrics already fetched
@@ -306,6 +312,7 @@ class MusicApp(App):
             for n, (tab, title) in enumerate(TABS.items(), 1):
                 with TabPane(f"{n} {title}", id=tab):
                     yield TrackList(tab)
+        yield OptionList(id="suggestions")
         yield Input(placeholder=SEARCH_HINT, id="search")
         yield Static(id="keys")
 
@@ -521,7 +528,9 @@ class MusicApp(App):
         """Two lines of keys: the player's, then the focused list's (or the input's)."""
         focused = self.focused
         if isinstance(focused, Input):
-            context = INPUT_KEYS
+            context = INPUT_KEYS if focused.placeholder == AI_HINT else SEARCH_KEYS
+        elif focused is self.query_one("#suggestions"):
+            context = SUGGESTION_KEYS
         else:
             kind = focused.kind if isinstance(focused, TrackList) else "radio"
             if kind == "playlists" and self.playlist_open is not None:
@@ -855,13 +864,68 @@ class MusicApp(App):
         field = self.query_one("#search", Input)
         field.placeholder = AI_HINT if mode == "ai" else SEARCH_HINT
         field.focus()
+        self.show_keys()
 
     @on(Input.Blurred, "#search")
     def input_left(self, event: Input.Blurred) -> None:
-        event.input.placeholder = SEARCH_HINT
+        suggestions = self.query_one("#suggestions", OptionList)
+
+        def settled() -> None:
+            # into the suggestions, the search goes on; anywhere else, it's left
+            if self.focused is not suggestions:
+                event.input.placeholder = SEARCH_HINT
+                suggestions.display = False
+
+        self.call_after_refresh(settled)
+
+    # --- search suggestions ---
+
+    @on(Input.Changed, "#search")
+    def typed(self, event: Input.Changed) -> None:
+        text = event.value.strip()
+        if not text or event.input.placeholder == AI_HINT:
+            self.query_one("#suggestions").display = False
+            self.workers.cancel_group(self, "suggest")
+            return
+        self.run_worker(self.suggest(text), group="suggest", exclusive=True)
+
+    async def suggest(self, text: str) -> None:
+        if text not in self.suggestion_cache:
+            await asyncio.sleep(SUGGEST_AFTER)  # typing on: this worker is replaced
+            try:
+                self.suggestion_cache[text] = await asyncio.to_thread(music.suggestions, text)
+            except Exception:
+                return  # no suggestions: the search itself still works
+        field = self.query_one("#search", Input)
+        if field.value.strip() != text or self.focused is not field:
+            return
+        found = self.suggestion_cache[text]
+        suggestions = self.query_one("#suggestions", OptionList)
+        suggestions.set_options(found)
+        suggestions.display = bool(found)
+
+    def action_suggestions(self) -> None:
+        """↓ in the search: into the suggestions."""
+        suggestions = self.query_one("#suggestions", OptionList)
+        if isinstance(self.focused, Input) and suggestions.display and suggestions.option_count:
+            suggestions.focus()
+            suggestions.highlighted = 0
+
+    @on(OptionList.OptionSelected, "#suggestions")
+    def suggestion_picked(self, event: OptionList.OptionSelected) -> None:
+        text = str(event.option.prompt)
+        field = self.query_one("#search", Input)
+        field.clear()
+        event.option_list.display = False
+        self.action_tab("search")
+        self.run_worker(self.find(text), group="search", exclusive=True)
 
     def action_back(self) -> None:
-        if isinstance(self.focused, Input):
+        suggestions = self.query_one("#suggestions", OptionList)
+        if self.focused is suggestions:
+            self.query_one("#search", Input).focus()  # back to typing
+        elif isinstance(self.focused, Input):
+            suggestions.display = False
             self.active_list().focus()
         elif isinstance(self.focused, TrackList) and self.focused.pop():
             pass  # back from a page
@@ -940,6 +1004,7 @@ class MusicApp(App):
             return
         ai_mode = event.input.placeholder == AI_HINT
         event.input.clear()
+        self.query_one("#suggestions").display = False
         if ai_mode:
             self.active_list().focus()
             self.run_worker(self.ai_radio(text), group="launch", exclusive=True)
