@@ -339,6 +339,31 @@ def test_play_next_and_add_to_queue(store):
     run(scenario())
 
 
+def test_adding_while_something_else_appends(store):
+    source = FakeSource({S: [S, A, B]})
+
+    class Busy(FakeMpv):
+        """Another append lands right after the first of ours, as a mix refill might."""
+
+        def _loadfile(self, url, flags, options):
+            reply = super()._loadfile(url, flags, options)
+            if url == track_url(C):
+                super()._loadfile(track_url(E), "append", "")
+            return reply
+
+    async def scenario():
+        mpv = Busy()
+        radio = Radio(mpv, LaunchSpec(seed=S, stream=source.stream(S)), store=store, source=source)
+        await radio.start()
+        await radio.settle()
+        await load(mpv, radio, 0)
+        await message(radio, *add("queue", C, D))
+        return mpv, radio
+
+    mpv, radio = run(scenario())
+    assert upnext(radio, mpv) == [C, D, A, B, E]
+
+
 def test_adding_to_a_finished_queue_plays_it(store):
     source = FakeSource()
 

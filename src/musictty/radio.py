@@ -392,7 +392,8 @@ class Radio:
                 self.record_seed(track.title)
             if track.id not in self.seen:
                 self.seen.add(track.id)
-                await self.loadfile(track_url(track.id), "append-play")
+                async with self.edit:  # not in the middle of a queue edit
+                    await self.loadfile(track_url(track.id), "append-play")
                 added += 1
         log.info("tracks added: %d", added)
         if not self.seed_recorded:
@@ -534,18 +535,24 @@ class Radio:
                 for i in range(pos + 1, len(playlist)):
                     if playlist[i].get("id") in self.queued:
                         at = i + 1
-            for n, track in enumerate(tracks):
+            placed = 0
+            for track in tracks:
                 self.names[track.id] = track.title
                 self.seen.add(track.id)
-                entry_id = await self.loadfile(
-                    track_url(track.id), "append" if at is not None else "append-play"
-                )
-                if entry_id is None:
+                url = track_url(track.id)
+                entry_id = await self.loadfile(url, "append" if at is not None else "append-play")
+                if at is None:
+                    if entry_id is not None:
+                        self.queued.add(entry_id)
                     continue
-                self.queued.add(entry_id)
-                if at is not None:
-                    last = len(playlist) + n  # the entry just appended
-                    await self.mpv.command("playlist-move", str(last), str(at + n))
+                # found by its id: something else may have been appended meanwhile
+                playlist = await self.playlist()
+                i = _index(playlist, entry_id) if entry_id is not None else len(playlist) - 1
+                if i is None:
+                    continue
+                self.queued.add(playlist[i].get("id"))
+                await self.mpv.command("playlist-move", str(i), str(at + placed))
+                placed += 1
         log.info("queued %d tracks (%s)", len(tracks), PLAY_NEXT if next_up else ADD_TO_QUEUE)
         await self.after_edit()
 
