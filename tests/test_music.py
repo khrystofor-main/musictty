@@ -117,3 +117,39 @@ def test_find_songs_keeps_order_and_skips_misses(monkeypatch):
         Track(B, "Y — Two"),
         Track(S, "X — One"),
     ]
+
+
+class Line:
+    """ytmusicapi's LyricLine."""
+
+    def __init__(self, text, start_time):
+        self.text, self.start_time, self.end_time, self.id = text, start_time, start_time + 1, 1
+
+
+def lyrics_client(watch, lyrics):
+    class Client(FakeYTMusic):
+        def get_watch_playlist(self, video_id, limit=25):
+            return watch
+
+        def get_lyrics(self, browse_id, timestamps=False):
+            assert browse_id == "MPLYt_1" and timestamps
+            return lyrics
+
+    return Client
+
+
+def test_timed_lyrics(monkeypatch):
+    data = {"lyrics": [Line("One", 1200), Line("Two", 3500)], "source": "LF", "hasTimestamps": True}
+    monkeypatch.setattr(music, "_client", lyrics_client({"lyrics": "MPLYt_1"}, data))
+    assert music.lyrics(S) == music.Lyrics([(1.2, "One"), (3.5, "Two")], True, "LF")
+
+
+def test_plain_lyrics(monkeypatch):
+    data = {"lyrics": "One\nTwo", "source": None, "hasTimestamps": False}
+    monkeypatch.setattr(music, "_client", lyrics_client({"lyrics": "MPLYt_1"}, data))
+    assert music.lyrics(S) == music.Lyrics([(None, "One"), (None, "Two")], False, "")
+
+
+def test_no_lyrics(monkeypatch):
+    monkeypatch.setattr(music, "_client", lyrics_client({"lyrics": None}, None))
+    assert music.lyrics(S) is None

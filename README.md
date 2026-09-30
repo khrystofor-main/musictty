@@ -56,12 +56,15 @@ command line. Its command is `musictty`, so it doesn't clash with v0's `music`.
 
 `musictty` on its own opens the player: what's playing, the current radio, recent
 radios, history, liked tracks and search. Keys: `space` pause, `n`/`p` next and
-previous, `+`/`-` volume, `l` like, `r` repeat, `s` stop, `1`–`5` tabs, `q` quit (the music
+previous, `+`/`-` volume, `l` like, `r` repeat, `s` stop, `1`–`6` tabs, `q` quit (the music
 keeps playing).
 
 Search (`/`) finds songs, albums and artists on YouTube Music: a song starts a radio, an
 album plays in order and then turns into a radio from its last track, an artist shows
 their top songs (`←` goes back to the results).
+
+Lyrics (tab `6`) follow the song line by line when YouTube Music has them timed, and show
+as plain text otherwise.
 
 AI radio (`a`, or `musictty ai "calm electronic for an evening of work"`): a language model
 picks a few songs for the mood, they play in order, and the radio goes on from the last one.
@@ -118,7 +121,8 @@ list the background process publishes there.
 - [x] Python rewrite, cross-platform: background radio, history, likes, command line
 - [x] Terminal UI ([Textual](https://textual.textualize.io/)): player, radios, history, likes, search
 - [x] Rich search: songs, albums, artists
-- [ ] Playlists and lyrics
+- [x] Lyrics, synced with the song
+- [ ] Playlists in search
 - [x] AI radio: describe a mood in plain words, and a language model picks the songs
 - [ ] Album art in the terminal
 
