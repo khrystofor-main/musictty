@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from . import ai, music, paths, player, youtube
 from .ipc import Mpv, NotRunning
@@ -17,7 +18,11 @@ from .radio import (
     AI_RADIO,
     LIKED_PLAYLIST,
     LIST_PROPERTY,
+    QUALITY_MESSAGE,
     RADIO_MIX,
+    SLEEP_END,
+    SLEEP_MESSAGE,
+    SLEEP_PROPERTY,
     UPNEXT_PROPERTY,
     LaunchSpec,
 )
@@ -96,16 +101,17 @@ async def start(
     """
     if not player.find_mpv():
         raise Failure("mpv not found")
+    store = Store()
+    settings = store.settings()
+    fmt = youtube.FORMATS[settings.quality]
     if query is not None:
-        found = await asyncio.to_thread(youtube.search, query)
+        found = await asyncio.to_thread(youtube.search, query, fmt)
         if not found:
             raise Failure("nothing found")
         seed, stream = found
     else:
         assert seed
-        stream = await asyncio.to_thread(youtube.resolve, seed)
-    store = Store()
-    settings = store.settings()
+        stream = await asyncio.to_thread(youtube.resolve, seed, fmt)
     spec = LaunchSpec(
         seed=seed,
         stream=stream,
@@ -113,6 +119,7 @@ async def start(
         source=source or (LIKED_PLAYLIST if queue is not None else RADIO_MIX),
         then_radio=then_radio,
         volume=settings.volume,
+        quality=settings.quality,
         # repeat is global and survives radio changes; repeat_one is for this run only
         loop_file=settings.repeat or repeat_one,
     )
@@ -168,6 +175,34 @@ async def message(*args: str) -> None:
 async def set_repeat_all(on: bool) -> None:
     """Repeat the whole queue. Only for the playing one: a new radio starts without it."""
     await with_player(lambda mpv: mpv.set("loop-playlist", "inf" if on else "no"))
+
+
+async def set_sleep(when: str) -> None:
+    """Stop the playing radio in `when` seconds ("0": no timer), or at the end of the track."""
+    await message(SLEEP_MESSAGE, when)
+
+
+def sleep_text(value: Any, now: float) -> str:
+    """The sleep timer as the radio publishes it, for people: "" if there is none."""
+    if value == SLEEP_END:
+        return "sleep after this track"
+    try:
+        left = float(value) - now
+    except (TypeError, ValueError):
+        return ""
+    return f"sleep {int(left // 60)}:{int(left % 60):02}" if left > 0 else ""
+
+
+async def sleep_status(mpv: Mpv) -> str:
+    return sleep_text(await mpv.get(SLEEP_PROPERTY), time.time())
+
+
+async def set_quality(quality: str) -> None:
+    """Remember the audio quality; the playing radio takes it for the tracks to come."""
+    store = Store()
+    store.save_settings(replace(store.settings(), quality=quality))
+    with contextlib.suppress(NotRunning):
+        await message(QUALITY_MESSAGE, quality)
 
 
 async def seek(seconds: int) -> None:

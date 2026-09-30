@@ -53,7 +53,7 @@ def mpv_command(mpv: str, address: str, spec: LaunchSpec) -> list[str]:
         f"--include={MPV_CONF}",
         f"--input-ipc-server={address}",
         "--idle=yes",  # the radio loads the first track itself, once it's connected
-        f"--ytdl-format={youtube.FORMAT}",
+        f"--ytdl-format={youtube.FORMATS.get(spec.quality, youtube.FORMAT)}",
         f"--volume={spec.volume}",
     ]
     if spec.loop_file:

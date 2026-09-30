@@ -3,7 +3,7 @@
 - seeds.tsv   tracks radios were started from (the bare `musictty` list)
 - plays.tsv   every started track of every radio (`musictty history`)
 - liked.tsv   liked tracks (`musictty like / liked`)
-- settings.json  volume and repeat, shared by all radios
+- settings.json  volume, repeat and audio quality, shared by all radios
 - playlists.json  your own playlists: [{"name": ..., "tracks": [[id, title], ...]}, ...]
 
 The same line format as v0, so its files can be imported as they are.
@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import paths
 from .models import Track
+from .youtube import DEFAULT_QUALITY, QUALITIES
 
 SEEDS = "seeds.tsv"
 PLAYS = "plays.tsv"
@@ -46,6 +47,7 @@ class PlaylistError(Exception):
 class Settings:
     volume: int = DEFAULT_VOLUME
     repeat: bool = False
+    quality: str = DEFAULT_QUALITY  # youtube.QUALITIES
 
 
 def _clean(text: str) -> str:
@@ -174,7 +176,9 @@ class Store:
         try:
             data = json.loads(self.path(SETTINGS).read_text(encoding="utf-8"))
             volume = max(0, min(MAX_VOLUME, int(data.get("volume", DEFAULT_VOLUME))))
-            return Settings(volume=volume, repeat=bool(data.get("repeat", False)))
+            quality = data.get("quality")
+            quality = quality if quality in QUALITIES else DEFAULT_QUALITY
+            return Settings(volume=volume, repeat=bool(data.get("repeat", False)), quality=quality)
         except (OSError, ValueError, TypeError, AttributeError):
             return Settings()
 

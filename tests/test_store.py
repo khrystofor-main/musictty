@@ -154,3 +154,12 @@ def test_broken_playlists_file_is_empty_not_fatal(isolated):
     assert store.playlists() == []
     store.path(PLAYLISTS).write_text('[{"name": "ok", "tracks": [["x", "y"]]}, {"nope": 1}, 5]')
     assert store.playlists() == [Playlist("ok", [Track("x", "y")])]
+
+
+def test_quality_setting(isolated):
+    store = Store()
+    assert store.settings().quality == "normal"
+    store.save_settings(Settings(quality="high"))
+    assert store.settings() == Settings(quality="high")
+    store.path(SETTINGS).write_text('{"volume": 50, "quality": "ultra"}', encoding="utf-8")
+    assert store.settings() == Settings(volume=50)  # an unknown quality is the default

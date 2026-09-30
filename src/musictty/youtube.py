@@ -18,8 +18,15 @@ from .models import Track
 
 log = logging.getLogger(__name__)
 
-# light audio stream (opus/m4a ~128–160 kbit/s); mpv gets the same format for its ytdl hook
-FORMAT = "bestaudio[acodec=opus]/bestaudio/best"
+# audio quality -> yt-dlp format; mpv gets the same format for its ytdl hook
+FORMATS = {
+    "low": "worstaudio[acodec=opus]/worstaudio/worst",  # opus ~50–70 kbit/s
+    "normal": "bestaudio[acodec=opus]/bestaudio/best",  # opus ~130–160 kbit/s
+    "high": "bestaudio/best",  # whatever has the highest bitrate
+}
+QUALITIES = list(FORMATS)
+DEFAULT_QUALITY = "normal"
+FORMAT = FORMATS[DEFAULT_QUALITY]
 
 _VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 _ID_IN_URL = re.compile(r"(?:[?&]v=|youtu\.be/)([A-Za-z0-9_-]{11})")
@@ -89,10 +96,10 @@ def _stream(info: dict) -> Stream | None:
     return Stream(video_id, title, url, user_agent)
 
 
-def resolve(video_id: str) -> Stream | None:
+def resolve(video_id: str, fmt: str = FORMAT) -> Stream | None:
     """Title and direct stream of one track in a single request; None if it failed."""
     try:
-        return _stream(_extract(watch_url(video_id), format=FORMAT, noplaylist=True))
+        return _stream(_extract(watch_url(video_id), format=fmt, noplaylist=True))
     except Exception as e:
         log.info("could not resolve %s: %s", video_id, e)
         return None
@@ -110,12 +117,12 @@ def _first_id(url: str, limit: int) -> str | None:
     return None
 
 
-def search(query: str) -> tuple[str, Stream | None] | None:
+def search(query: str, fmt: str = FORMAT) -> tuple[str, Stream | None] | None:
     """First song for the query: (id, stream), where the stream may be missing; None if nothing."""
     url = f"https://music.youtube.com/search?q={quote(query)}#songs"
     # usually one request gives the first song already resolved to a stream
     try:
-        entries = _extract(url, format=FORMAT, playlist_items="1").get("entries") or []
+        entries = _extract(url, format=fmt, playlist_items="1").get("entries") or []
         stream = _stream(entries[0]) if entries else None
         if stream:
             return stream.id, stream

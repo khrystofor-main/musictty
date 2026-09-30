@@ -16,10 +16,12 @@ script-messages (add, remove, move, shuffle), naming entries by their mpv entry 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import random
+import time
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -50,6 +52,12 @@ ADD_MESSAGE = "musictty-add"  # "next" | "queue", then [[id, title], ...] as JSO
 REMOVE_MESSAGE = "musictty-remove"
 MOVE_MESSAGE = "musictty-move"  # entry, "before" | "after", target entry
 SHUFFLE_MESSAGE = "musictty-shuffle"
+SLEEP_MESSAGE = "musictty-sleep"  # seconds until the radio stops (0: never), or SLEEP_END
+SLEEP_END = "end"  # stop after the track that's playing
+# "" (no timer), SLEEP_END, or the time the radio stops (seconds since the epoch)
+SLEEP_PROPERTY = "user-data/musictty/sleep"
+FADE_SECONDS = 30.0  # the sleep timer turns the volume down over the last half minute
+QUALITY_MESSAGE = "musictty-quality"  # one of youtube.QUALITIES, for the tracks to come
 PLAY_NEXT, ADD_TO_QUEUE = "next", "queue"
 
 RADIO_MIX = "radio mix"
@@ -72,6 +80,7 @@ class LaunchSpec:
     loop_file: bool = False
     # the queue plays once, then the radio goes on from its last track (an album)
     then_radio: bool = False
+    quality: str = youtube.DEFAULT_QUALITY
 
     @property
     def loops(self) -> bool:
@@ -94,13 +103,14 @@ class LaunchSpec:
             volume=int(data.get("volume", 70)),
             loop_file=bool(data.get("loop_file", False)),
             then_radio=bool(data.get("then_radio", False)),
+            quality=data.get("quality") or youtube.DEFAULT_QUALITY,
         )
 
 
 class Source(Protocol):
     """Where tracks come from: the youtube module, or a fake in tests."""
 
-    def resolve(self, video_id: str) -> Stream | None: ...
+    def resolve(self, video_id: str, fmt: str) -> Stream | None: ...
     def mix(self, seed: str, limit: int) -> list[Track]: ...
     def check(self, stream: Stream) -> tuple[bool, str]: ...
 
@@ -131,6 +141,7 @@ class Radio:
         self.spec = spec
         self.store = store or Store()
         self.yt = source
+        self.format = youtube.FORMATS.get(spec.quality, youtube.FORMAT)
         # repeat all (mpv's loop-playlist; the liked playlist starts with it): no mixes,
         # nothing trimmed. Followed as it changes
         self.looping = spec.loops
@@ -155,6 +166,9 @@ class Radio:
         self.loading: int | None = None
         self.edit = asyncio.Lock()  # playlist edits that depend on indexes must not interleave
         self.tasks: set[asyncio.Task] = set()
+        # the sleep timer: a task that stops the radio, or stop at the end of this track
+        self.sleep_task: asyncio.Task | None = None
+        self.sleep_at_end = False
         # network calls block: they run here. Own pool, so quitting never waits for them
         self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="musictty")
 
@@ -265,6 +279,8 @@ class Radio:
                 log.exception("failed to handle %s", event.get("event"))
         for task in self.tasks:
             task.cancel()
+        if self.sleep_task:
+            self.sleep_task.cancel()
         self.pool.shutdown(wait=False, cancel_futures=True)
 
     async def handle(self, event: dict) -> None:
@@ -273,6 +289,9 @@ class Radio:
                 self.loading = event.get("playlist_entry_id")
             case "file-loaded":
                 await self.on_file_loaded()
+            case "end-file" if event.get("reason") == "eof" and self.sleep_at_end:
+                log.info("sleep timer: the track is over, stopping")
+                await self.mpv.command("quit")
             case "end-file" if event.get("reason") == "error":
                 await self.on_load_error(event.get("playlist_entry_id"))
             case "client-message":
@@ -414,7 +433,7 @@ class Radio:
             return
         self.resolving.add(video_id)
         try:
-            stream = await self.blocking(self.yt.resolve, video_id)
+            stream = await self.blocking(self.yt.resolve, video_id, self.format)
             if stream is None:
                 return  # the ytdl:// entry stays and works the usual way
             good, code = await self.blocking(self.yt.check, stream)
@@ -478,6 +497,12 @@ class Radio:
                 await self.move(int(entry), int(target), after=where == "after")
             case [name] if name == SHUFFLE_MESSAGE:
                 await self.shuffle()
+            case [name, when] if name == SLEEP_MESSAGE:
+                await self.set_sleep(when)
+            case [name, quality] if name == QUALITY_MESSAGE and quality in youtube.FORMATS:
+                self.format = youtube.FORMATS[quality]
+                await self.mpv.set("ytdl-format", self.format)
+                log.info("audio quality: %s", quality)
 
     async def play_entry(self, entry_id: int, keep_before: bool) -> None:
         """`list back N` plays an entry where it is (the queue after it is kept). From up next,
@@ -577,6 +602,50 @@ class Radio:
             self.queued.clear()  # the shuffled queue is one queue now
         log.info("shuffled %d tracks", len(upcoming))
         await self.after_edit()
+
+    async def set_sleep(self, when: str) -> None:
+        """A new sleep timer replaces the one set before."""
+        if self.sleep_task:
+            self.sleep_task.cancel()
+            self.sleep_task = None
+        self.sleep_at_end = when == SLEEP_END
+        if self.sleep_at_end:
+            await self.mpv.set(SLEEP_PROPERTY, SLEEP_END)
+            log.info("sleep timer: after this track")
+            return
+        try:
+            seconds = float(when)
+        except ValueError:
+            seconds = 0
+        if seconds <= 0:
+            await self.mpv.set(SLEEP_PROPERTY, "")
+            log.info("sleep timer off")
+            return
+        await self.mpv.set(SLEEP_PROPERTY, str(time.time() + seconds))
+        self.sleep_task = asyncio.create_task(self.sleep(seconds))
+        log.info("sleep timer: %d min", round(seconds / 60))
+
+    async def sleep(self, seconds: float) -> None:
+        """Wait, turn the volume down, stop. Cancelled (a new timer, off): the volume comes back."""
+        fade = min(FADE_SECONDS, seconds)
+        volume = None
+        try:
+            await asyncio.sleep(seconds - fade)
+            volume = await self.mpv.get("volume")
+            steps = max(10, int(fade))  # a step a second, at least ten
+            for step in range(1, steps + 1):
+                if volume is not None:
+                    await self.mpv.set("volume", volume * (1 - step / steps))
+                await asyncio.sleep(fade / steps)
+            log.info("sleep timer: time's up, stopping")
+            await self.mpv.command("quit")
+        except asyncio.CancelledError:
+            if volume is not None:
+                with contextlib.suppress(MpvError):
+                    await self.mpv.set("volume", volume)
+            raise
+        except MpvError:
+            pass  # the player is gone already
 
     async def after_edit(self) -> None:
         await self.prefetch_next()

@@ -14,7 +14,7 @@ from textual.widgets.option_list import Option
 NEW = "+ new playlist"
 
 CSS = """
-Ask, Pick, Confirm { align: center middle; }
+Ask, Pick, Choose, Confirm { align: center middle; }
 .dialog {
     width: 60; max-width: 90%; height: auto; max-height: 80%;
     border: round $accent; background: $panel; padding: 0 1;
@@ -78,6 +78,29 @@ class Pick(Dialog):
                 self.dismiss((name, True))
 
         self.app.push_screen(Ask("name of the new playlist"), named)
+
+
+class Choose(Dialog):
+    """One of a few options: returns its index, or None if cancelled."""
+
+    def __init__(self, title: str, labels: list[str], current: int | None = None) -> None:
+        super().__init__()
+        self.title_text, self.labels, self.current = title, labels, current
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Static(Text(self.title_text, style="bold"))
+            marks = ["● " if i == self.current else "  " for i in range(len(self.labels))]
+            yield OptionList(*(m + label for m, label in zip(marks, self.labels, strict=True)))
+            yield Static("enter pick · esc cancel", classes="hint")
+
+    def on_mount(self) -> None:
+        if self.current is not None:
+            self.query_one(OptionList).highlighted = self.current
+
+    @on(OptionList.OptionSelected)
+    def picked(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option_index)
 
 
 class Confirm(Dialog):

@@ -382,6 +382,25 @@ def test_the_queue_with_a_real_player(tmp_path, monkeypatch):
             await until(pilot, lambda: playing() == A)
             await until(pilot, lambda: shows(title(B), "Earlier — C"))
 
+            # the sleep timer and the audio quality, in dialogs
+            await pilot.press("z", "end", "enter")  # after this track
+            await until(pilot, lambda: " · sleep after this track · " in now(app))
+            await pilot.press("z", "home", "enter")  # off
+            await until(pilot, lambda: "sleep" not in now(app))
+            await pilot.press("z", "home", "down", "enter")  # in 15 minutes
+            await until(pilot, lambda: " · sleep 14:5" in now(app) or "sleep 15:00" in now(app))
+            await pilot.press("z", "escape")  # changed my mind: it stays
+            assert "sleep" in now(app)
+            await pilot.press("Q", "home", "enter")
+            await until(pilot, lambda: store.settings().quality == "low")
+            low = "worstaudio[acodec=opus]/worstaudio/worst"
+            for _ in range(100):  # the radio takes it for the tracks to come
+                if await mpv.get("ytdl-format") == low:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("the radio kept its audio quality")
+
             await pilot.press("s")
             await asyncio.wait_for(task, 5)
             await pilot.press("q")
