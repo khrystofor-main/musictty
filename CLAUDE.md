@@ -42,7 +42,9 @@ in the user runtime dir elsewhere). Its clients:
   It exits when mpv quits.
 
 Other modules: `control.py` (start/stop a radio, volume, repeat: shared by CLI and UI),
-`music.py` (ytmusicapi: search, albums, artists' top songs; yt-dlp's search only gives bare
+`ai.py` (AI radio: an OpenAI-compatible chat API turns a mood into "Artist - Title" songs;
+presets DeepSeek and Nous Portal, chosen by which key env var is set; `control.ai_radio` finds
+them with ytmusicapi and plays them as a then_radio queue), `music.py` (ytmusicapi: search, albums, artists' top songs; yt-dlp's search only gives bare
 ids for albums and artists), `ipc.py` (async JSON IPC client), `player.py` (find/launch/stop mpv, spawn
 the daemon), `youtube.py` (yt-dlp as a library; blocking, run in a thread),
 `store.py` (data files, v0 import), `paths.py`, `mpv.conf`.
@@ -85,8 +87,9 @@ Python: `uv run pytest` and `uv run ruff check src tests && uv run ruff format -
   with a real mpv.
 - `tests/test_player.py` uses a real silent mpv (`MUSICTTY_MPV_ARGS=--ao=null`) and local
   WAV files instead of YouTube; skipped when mpv is missing.
-- YouTube may be unreachable from the sandbox: yt-dlp and ytmusicapi calls are tested with
-  fakes shaped like their documented results.
+- YouTube and the AI APIs may be unreachable from the sandbox: yt-dlp and ytmusicapi calls
+  are tested with fakes shaped like their documented results, the AI with a local fake
+  OpenAI-compatible server (`tests/test_ai.py`).
 - CI (`.github/workflows/tests.yml`) runs lint and the tests on Windows and Ubuntu, with a
   real mpv on both; `MUSICTTY_REQUIRE_MPV=1` turns a missing mpv into a failure there.
   This is where the Windows code actually gets exercised.

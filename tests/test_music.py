@@ -101,3 +101,19 @@ def test_artist_songs():
         "Daft Punk",
         [Result(SONGS, B, "Daft Punk — Around the World")],
     )
+
+
+def test_find_songs_keeps_order_and_skips_misses(monkeypatch):
+    class Search(FakeYTMusic):
+        def search(self, query, filter=None, limit=20):
+            return {
+                "one": [song(S, "One", "X")],
+                "again": [song(S, "One", "X")],
+                "two": [song(A, "Gone", isAvailable=False), song(B, "Two", "Y")],
+            }.get(query, [])
+
+    monkeypatch.setattr(music, "_client", Search)
+    assert music.find_songs(["two", "missing", "one", "again"]) == [
+        Track(B, "Y — Two"),
+        Track(S, "X — One"),
+    ]

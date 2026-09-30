@@ -42,6 +42,8 @@ musictty — endless music radio in the terminal
   musictty search <query>      new radio from a track found on YouTube Music
   musictty <link>              new radio from a track link
                                (music.youtube.com, youtube.com, youtu.be)
+  musictty ai <mood>           the ai picks songs for a mood, then the radio goes on
+                               (key in DEEPSEEK_API_KEY or NOUS_API_KEY)
 
   musictty                     the player: now playing, radios, history, liked, search
   musictty recent              recent radios
@@ -125,6 +127,10 @@ def parse(argv: list[str]) -> Call:
         if not rest:
             raise Invalid
         return Call("radio", text=" ".join(rest), action="search")
+    if head == "ai":
+        if not rest:
+            raise Invalid
+        return Call("ai", text=" ".join(rest))
     if not rest:
         if head in SIMPLE:
             return Call(head)
@@ -197,6 +203,12 @@ def cmd_recent(call: Call) -> None:
         print_numbered([t.title for t in seeds])
     else:
         start_radio(pick(seeds, call.number).id)
+
+
+def cmd_ai(call: Call) -> None:
+    assert call.text
+    tracks = asyncio.run(control.ai_radio(call.text))
+    print_numbered([t.title for t in tracks])
 
 
 def cmd_radio(call: Call) -> None:
@@ -350,6 +362,7 @@ COMMANDS: dict[str, Callable[[Call], int | None]] = {
     "ui": cmd_ui,
     "recent": cmd_recent,
     "radio": cmd_radio,
+    "ai": cmd_ai,
     "now": cmd_now,
     "like": cmd_like,
     "unlike": cmd_like,
