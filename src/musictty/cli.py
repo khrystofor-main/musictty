@@ -20,10 +20,15 @@ from .control import Failure, list_lines
 from .ipc import Mpv, MpvError
 from .models import Track
 from .radio import (
+    ADD_TO_QUEUE,
     JUMP_MESSAGE,
     LIST_PROPERTY,
     PID_PROPERTY,
+    PLAY_MESSAGE,
+    PLAY_NEXT,
     RADIO_MIX,
+    REMOVE_MESSAGE,
+    SHUFFLE_MESSAGE,
     SOURCE_PROPERTY,
 )
 from .store import (
@@ -53,6 +58,10 @@ musictty — endless music radio in the terminal
   musictty list                current and played tracks (▶ current, ↻ on repeat, ♥ liked)
   musictty list <n>            new radio from track n
   musictty list back <n>       jump back to track n (the queue is kept)
+  musictty upnext              tracks coming up: the queue, then the radio's picks
+  musictty upnext <n>          play track n now (the ones before it still come next)
+  musictty upnext remove <n>   remove track n from what's coming up
+  musictty shuffle             shuffle what's coming up
   musictty history             last 30 played tracks of all radios
   musictty history <n>         new radio from track n
   musictty liked               liked tracks
@@ -60,6 +69,8 @@ musictty — endless music radio in the terminal
   musictty liked play <n>      play liked tracks in a loop, from track n down
   musictty liked repeat <n>    same, with track n on repeat
   musictty liked remove <n>    remove track n from liked
+  musictty history next <n>    play track n next (liked next <n> too)
+  musictty history queue <n>   add track n to the queue (liked queue <n> too)
 
   musictty like                like the current track
   musictty unlike              remove the current track from liked
@@ -70,6 +81,8 @@ musictty — endless music radio in the terminal
   musictty play                resume
   musictty repeat on           repeat the current track
   musictty repeat off          stop repeating
+  musictty repeat all on|off   repeat the whole queue (the radio stops adding tracks)
+  musictty seek <±seconds>     seek in the track: seek +10, seek -10
   musictty vol+ / vol-         volume ±5
   musictty stop                stop the radio
 
@@ -97,10 +110,19 @@ SIMPLE = {
     "list",
     "history",
     "liked",
+    "upnext",
+    "shuffle",
 }
-LIST_ACTIONS = {"list": {"back"}, "history": set(), "liked": {"play", "repeat", "remove"}}
+QUEUE_ACTIONS = {PLAY_NEXT, ADD_TO_QUEUE}
+LIST_ACTIONS = {
+    "list": {"back"},
+    "history": QUEUE_ACTIONS,
+    "liked": {"play", "repeat", "remove", *QUEUE_ACTIONS},
+    "upnext": {"remove"},
+}
 LINK = re.compile(r"https?://([\w-]+\.)*(youtube\.com|youtu\.be)/", re.ASCII)
 NUMBER = re.compile(r"[1-9][0-9]{0,3}")
+SECONDS = re.compile(r"[+-]?[0-9]{1,4}")
 
 T = TypeVar("T")
 
@@ -113,8 +135,8 @@ class Invalid(Exception):
 class Call:
     name: str
     text: str | None = None  # search query, link or id; on/off; a folder
-    number: int | None = None  # 1-based position in a printed list
-    action: str | None = None  # search; list back; liked play / repeat / remove
+    number: int | None = None  # 1-based position in a printed list; seconds to seek
+    action: str | None = None  # search; list back; liked play / repeat / remove; repeat all
 
 
 def _number(text: str) -> int | None:
@@ -144,6 +166,10 @@ def parse(argv: list[str]) -> Call:
         raise Invalid
     if head == "repeat" and rest in (["on"], ["off"]):
         return Call("repeat", text=rest[0])
+    if head == "repeat" and rest in (["all", "on"], ["all", "off"]):
+        return Call("repeat", text=rest[1], action="all")
+    if head == "seek" and len(rest) == 1 and SECONDS.fullmatch(rest[0]):
+        return Call("seek", number=int(rest[0]))
     if head == "import-v0" and len(rest) == 1:
         return Call(head, text=rest[0])
     if head in LIST_ACTIONS:
@@ -236,6 +262,8 @@ def cmd_now(call: Call) -> None:
         if cur and cur.get("id") in liked:
             mark += "♥ "
         source = await mpv.get(SOURCE_PROPERTY) or RADIO_MIX
+        if await control.repeating_all(mpv):
+            source += " · repeat all"
         return f"{mark}{title} · {source}"
 
     print(on_player(now))
@@ -276,10 +304,17 @@ def cmd_list(call: Call) -> int | None:
     return None
 
 
+def enqueue(track: Track, where: str) -> None:
+    if asyncio.run(control.enqueue([track], where)):
+        print(f"{'next' if where == PLAY_NEXT else 'queued'}: {track.title}")
+
+
 def cmd_history(call: Call) -> None:
     plays = Store().recent_plays(30)
     if call.number is None:
         print_numbered([t.title for t in plays])
+    elif call.action in QUEUE_ACTIONS:
+        enqueue(pick(plays, call.number), call.action)
     else:
         start_radio(pick(plays, call.number).id)
 
@@ -294,6 +329,8 @@ def cmd_liked(call: Call) -> None:
     if call.action == "remove":
         store.unlike(track.id)
         print(f"♡ {track.title}")
+    elif call.action in QUEUE_ACTIONS:
+        enqueue(track, call.action)
     elif call.action is None:
         start_radio(track.id)
     else:
@@ -301,8 +338,30 @@ def cmd_liked(call: Call) -> None:
         start_radio(track.id, queue=queue, repeat_one=call.action == "repeat")
 
 
+def cmd_upnext(call: Call) -> None:
+    items = on_player(control.upnext)
+    if call.number is None:
+        print_numbered([it["title"] for it in items])
+        return
+    item = pick(items, call.number)
+    name = REMOVE_MESSAGE if call.action == "remove" else PLAY_MESSAGE
+    asyncio.run(control.message(name, str(item["entry"])))
+
+
+def cmd_shuffle(call: Call) -> None:
+    asyncio.run(control.message(SHUFFLE_MESSAGE))
+
+
 def cmd_repeat(call: Call) -> None:
+    if call.action == "all":
+        asyncio.run(control.set_repeat_all(call.text == "on"))
+        return
     asyncio.run(control.set_repeat(call.text == "on"))
+
+
+def cmd_seek(call: Call) -> None:
+    assert call.number is not None
+    asyncio.run(control.seek(call.number))
 
 
 def cmd_volume(call: Call) -> None:
@@ -385,7 +444,10 @@ COMMANDS: dict[str, Callable[[Call], int | None]] = {
     "list": cmd_list,
     "history": cmd_history,
     "liked": cmd_liked,
+    "upnext": cmd_upnext,
+    "shuffle": cmd_shuffle,
     "repeat": cmd_repeat,
+    "seek": cmd_seek,
     "vol+": cmd_volume,
     "vol-": cmd_volume,
     "next": cmd_playback,

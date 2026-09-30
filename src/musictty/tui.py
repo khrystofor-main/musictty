@@ -15,20 +15,33 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Footer, Input, OptionList, ProgressBar, Static, TabbedContent, TabPane
+from textual.widgets import Input, OptionList, ProgressBar, Static, TabbedContent, TabPane
 from textual.widgets.option_list import Option
 
 from . import control, music, paths, player
 from .control import Failure
 from .ipc import Mpv, MpvError, NotRunning
 from .models import Track
-from .radio import ALBUM, JUMP_MESSAGE, LIST_PROPERTY, RADIO_MIX, SOURCE_PROPERTY
+from .radio import (
+    ADD_TO_QUEUE,
+    ALBUM,
+    JUMP_MESSAGE,
+    LIST_PROPERTY,
+    MOVE_MESSAGE,
+    PLAY_MESSAGE,
+    PLAY_NEXT,
+    RADIO_MIX,
+    REMOVE_MESSAGE,
+    SHUFFLE_MESSAGE,
+    SOURCE_PROPERTY,
+    UPNEXT_PROPERTY,
+)
 from .store import Store
 
-OBSERVED = ("media-title", "pause", "volume", "loop-file", "duration")
-OBSERVED += (LIST_PROPERTY, SOURCE_PROPERTY)
+OBSERVED = ("media-title", "pause", "volume", "loop-file", "loop-playlist", "duration")
+OBSERVED += (LIST_PROPERTY, SOURCE_PROPERTY, UPNEXT_PROPERTY)
 
-# tab id -> title; keys 1-6 switch between them
+# tab id -> title; keys 1-7 switch between them
 TABS = {
     "radio": "Radio",
     "recent": "Recent",
@@ -36,7 +49,10 @@ TABS = {
     "liked": "Liked",
     "search": "Search",
     "lyrics": "Lyrics",
+    "upnext": "Up next",
 }
+SEEK_STEP = 10  # seconds
+
 LYRICS_TOP = 2  # the track's title and a blank line above the lyrics
 
 
@@ -91,6 +107,46 @@ def row_title(row: Any) -> str:
     return row.get("title", "?") if isinstance(row, dict) else row.title
 
 
+# the key bar: the player's keys, then those of the focused list
+PLAYER_KEYS = [
+    ("space", "pause"),
+    ("n", "next"),
+    ("p", "prev"),
+    ("+/-", "volume"),
+    (",/.", "seek"),
+    ("l", "like"),
+    ("r/R", "repeat one/all"),
+    ("x", "shuffle"),
+    ("s", "stop"),
+]
+QUEUE_KEYS = [("e", "queue"), ("E", "play next")]
+LIST_KEYS = {
+    "radio": [("enter", "radio"), ("←", "jump back"), *QUEUE_KEYS],
+    "recent": [("enter", "radio"), *QUEUE_KEYS],
+    "history": [("enter", "radio"), *QUEUE_KEYS],
+    "liked": [
+        ("enter", "radio"),
+        ("→/←", "loop/+repeat"),
+        ("del", "unlike"),
+        *QUEUE_KEYS,
+    ],
+    "search": [("enter", "play/open"), ("←", "back"), *QUEUE_KEYS],
+    "lyrics": [],
+    "upnext": [
+        ("enter", "play now"),
+        ("E", "to the top"),
+        ("shift+↑/↓", "move"),
+        ("del", "remove"),
+    ],
+}
+APP_KEYS = [("/", "search"), ("a", "ai radio"), ("q", "quit")]
+INPUT_KEYS = [("enter", "go"), ("esc", "back")]
+
+
+def key_line(keys: list[tuple[str, str]]) -> str:
+    return "  ".join(f"[b $footer-key-foreground]{key}[/] {desc}" for key, desc in keys)
+
+
 class MusicApp(App):
     TITLE = "musictty"
     ENABLE_COMMAND_PALETTE = False
@@ -102,6 +158,7 @@ class MusicApp(App):
     TabbedContent { height: 1fr; }
     TrackList { height: 1fr; border: none; }
     #search { margin: 0 1; }
+    #keys { height: auto; padding: 0 1; background: $footer-background; }
     """
 
     BINDINGS = [
@@ -110,9 +167,17 @@ class MusicApp(App):
         Binding("p", "prev", "prev"),
         Binding("plus,equals_sign", "volume(5)", "vol+", key_display="+"),
         Binding("minus", "volume(-5)", "vol-", key_display="-"),
+        Binding("comma", f"seek({-SEEK_STEP})", "-10s", key_display=","),
+        Binding("full_stop", f"seek({SEEK_STEP})", "+10s", key_display="."),
         Binding("l", "like", "like"),
         Binding("r", "repeat", "repeat"),
+        Binding("R,shift+r", "repeat_all", "repeat all", key_display="R"),
+        Binding("x", "shuffle", "shuffle"),
         Binding("s", "stop", "stop"),
+        Binding("e", f"enqueue('{ADD_TO_QUEUE}')", "queue"),
+        Binding("E,shift+e", f"enqueue('{PLAY_NEXT}')", "play next", key_display="E"),
+        Binding("shift+up", "move(-1)", "up", show=False),
+        Binding("shift+down", "move(1)", "down", show=False),
         Binding("slash", "search", "search", key_display="/"),
         Binding("a", "ai", "ai radio"),
         Binding("q", "quit", "quit"),
@@ -144,7 +209,7 @@ class MusicApp(App):
                 with TabPane(f"{n} {title}", id=tab):
                     yield TrackList(tab)
         yield Input(placeholder=SEARCH_HINT, id="search")
-        yield Footer()
+        yield Static(id="keys")
 
     async def on_mount(self) -> None:
         self.render_now()
@@ -196,7 +261,7 @@ class MusicApp(App):
             self.sync_lyrics()
 
     def player_changed(self, name: str | None) -> None:
-        if name in (None, LIST_PROPERTY, "loop-file"):
+        if name in (None, LIST_PROPERTY, UPNEXT_PROPERTY, "loop-file", "loop-playlist"):
             self.refresh_lists()
         if name in (None, LIST_PROPERTY):
             self.update_lyrics()
@@ -204,6 +269,9 @@ class MusicApp(App):
 
     def repeating(self) -> bool:
         return self.props.get("loop-file") not in (None, False, "no")
+
+    def repeating_all(self) -> bool:
+        return self.props.get("loop-playlist") not in (None, False, "no")
 
     def current(self) -> dict | None:
         items = self.props.get(LIST_PROPERTY) or []
@@ -226,6 +294,8 @@ class MusicApp(App):
         details = [self.props.get(SOURCE_PROPERTY) or RADIO_MIX]
         if marks:
             details.append(marks.strip())
+        if self.repeating_all():
+            details.append("repeat all")
         details.append(f"{clock(self.position)} / {clock(duration)}")
         volume = self.props.get("volume")
         if volume is not None:
@@ -259,6 +329,7 @@ class MusicApp(App):
         else:
             keep = radio_list.rows[radio_list.highlighted or 0].get("entry")
             radio_list.show(radio, lines, keep, key=lambda row: row.get("entry"))
+        self.show_upnext(liked_ids)
         for kind, rows in (
             ("recent", store.recent_seeds(10)),
             ("history", store.recent_plays(30)),
@@ -267,6 +338,35 @@ class MusicApp(App):
             heart = kind != "liked"  # every liked track has one: no need to show it there
             lines = [("♥ " if heart and t.id in liked_ids else "") + t.title for t in rows]
             self.track_list(kind).show(rows, lines)
+
+    def show_upnext(self, liked_ids: set[str]) -> None:
+        """The queue first, then the radio's own picks under a heading of their own."""
+        items = self.props.get(UPNEXT_PROPERTY) or []
+        rows: list[Any] = []
+        lines: list[Any] = []
+        any_liked = any(it.get("id") in liked_ids for it in items)
+        # with repeat all it's one loop: the tracks round it aren't the radio's
+        radio_picks = not self.repeating_all()
+        for n, it in enumerate(items):
+            if radio_picks and not it.get("queued"):
+                radio_picks = False  # one heading, at the first of them
+                if n:
+                    rows.append(None)
+                    lines.append(Option("", disabled=True))
+                rows.append(None)
+                lines.append(heading("from the radio mix"))
+            mark = ("♥ " if it.get("id") in liked_ids else "  ") if any_liked else ""
+            lines.append(mark + it.get("title", "?"))
+            rows.append(it)
+        if not items:
+            off = self.mpv is None
+            rows, lines = [None], [heading("radio is off" if off else "nothing up next")]
+        lst = self.track_list("upnext")
+        keep = lst.rows[lst.highlighted] if lst.highlighted is not None and lst.rows else None
+        entry = keep.get("entry") if keep else None
+        lst.show(rows, lines, entry, key=lambda row: row.get("entry") if row else None)
+        if lst.highlighted is not None and rows[lst.highlighted] is None:
+            lst.highlighted = next((i for i, row in enumerate(rows) if row), None)
 
     def active_list(self) -> TrackList:
         focused = self.focused
@@ -280,6 +380,19 @@ class MusicApp(App):
         self.update_lyrics()
         if not isinstance(self.focused, Input):
             self.active_list().focus()
+
+    def on_descendant_focus(self) -> None:
+        self.show_keys()
+
+    def show_keys(self) -> None:
+        """Two lines of keys: the player's, then the focused list's (or the input's)."""
+        focused = self.focused
+        if isinstance(focused, Input):
+            context = INPUT_KEYS
+        else:
+            kind = focused.kind if isinstance(focused, TrackList) else "radio"
+            context = LIST_KEYS.get(kind, []) + APP_KEYS
+        self.query_one("#keys", Static).update(key_line(PLAYER_KEYS) + "\n" + key_line(context))
 
     @on(OptionList.OptionSelected)
     def row_selected(self, event: OptionList.OptionSelected) -> None:
@@ -297,6 +410,10 @@ class MusicApp(App):
         if row is None:  # a heading
             return
         match lst.kind, key:
+            case "upnext", "enter" | "right":
+                self.run_worker(self.queue_message(PLAY_MESSAGE, str(row["entry"])))
+            case "upnext", "delete":
+                self.run_worker(self.queue_message(REMOVE_MESSAGE, str(row["entry"])))
             case "search", "left":
                 self.search_go_back()
             case "search", "enter" | "right" if row.kind == music.ALBUMS:
@@ -319,6 +436,86 @@ class MusicApp(App):
                 self.render_now()
             case _, "enter" | "right" if row_id(row):
                 self.launch(row_id(row), row_title(row))
+
+    def action_enqueue(self, where: str) -> None:
+        """e / E on a row: add it to the queue, or play it next."""
+        lst = self.focused
+        if not isinstance(lst, TrackList) or lst.highlighted is None or not lst.rows:
+            return
+        row = lst.rows[lst.highlighted]
+        if row is None:
+            return
+        if lst.kind == "upnext":
+            if where == PLAY_NEXT:  # E moves it to the top
+                first = next(it for it in lst.rows if it)
+                if first is not row:
+                    move = (MOVE_MESSAGE, str(row["entry"]), "before", str(first["entry"]))
+                    self.run_worker(self.queue_message(*move))
+            return
+        if isinstance(row, music.Result) and row.kind == music.ARTISTS:
+            return
+        self.run_worker(self.enqueue(row, where))
+
+    async def enqueue(self, row: Any, where: str) -> None:
+        if isinstance(row, music.Result) and row.kind == music.ALBUMS:
+            try:
+                label, tracks = await asyncio.to_thread(music.album, row.id)
+            except Exception:
+                self.notify(f"could not open {row.title}", severity="error")
+                return
+            label = label or row.title
+        else:
+            label, tracks = row_title(row), [Track(row_id(row), row_title(row))]
+        if not tracks or not tracks[0].id:
+            return
+        try:
+            queued = await control.enqueue(tracks, where, source=ALBUM)
+        except Failure as e:
+            self.notify(str(e), severity="error")
+            return
+        if queued:
+            self.notify(("next: " if where == PLAY_NEXT else "queued: ") + label, timeout=3)
+        else:
+            self.action_tab("radio")
+
+    async def queue_message(self, *args: str) -> None:
+        if not self.mpv:
+            self.notify("radio is off")
+            return
+        with contextlib.suppress(MpvError):
+            await control.message(*args)
+
+    def action_move(self, step: int) -> None:
+        """shift+↑ / shift+↓ in up next."""
+        lst = self.focused
+        if not isinstance(lst, TrackList) or lst.kind != "upnext" or lst.highlighted is None:
+            return
+        row = lst.rows[lst.highlighted]
+        if row is None:
+            return
+        at = lst.highlighted + step
+        while 0 <= at < len(lst.rows) and lst.rows[at] is None:
+            at += step
+        if not 0 <= at < len(lst.rows):
+            return
+        where = "before" if step < 0 else "after"
+        move = (MOVE_MESSAGE, str(row["entry"]), where, str(lst.rows[at]["entry"]))
+        self.run_worker(self.queue_message(*move))
+
+    async def action_shuffle(self) -> None:
+        if self.mpv:
+            self.notify("shuffled up next", timeout=2)
+        await self.queue_message(SHUFFLE_MESSAGE)
+
+    async def action_repeat_all(self) -> None:
+        if not self.mpv:
+            self.notify("radio is off")
+            return
+        with contextlib.suppress(MpvError):
+            await control.set_repeat_all(not self.repeating_all())
+
+    async def action_seek(self, seconds: int) -> None:
+        await self.player_command("seek", seconds, "relative")
 
     def action_tab(self, tab: str) -> None:
         self.query_one(TabbedContent).active = tab

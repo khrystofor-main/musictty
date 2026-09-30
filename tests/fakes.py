@@ -72,6 +72,8 @@ class FakeMpv:
             self.entries.insert(j - 1 if i < j else j, entry)
         elif name == "playlist-play-index":
             self.play(int(rest[0]))
+        elif name == "observe_property":
+            pass  # the tests send the property-change events themselves
         else:
             raise AssertionError(f"unexpected command {cmd}")
         return None

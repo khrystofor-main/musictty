@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import TypeVar
@@ -11,7 +12,15 @@ from typing import TypeVar
 from . import ai, music, paths, player, youtube
 from .ipc import Mpv, NotRunning
 from .models import Track
-from .radio import AI_RADIO, LIKED_PLAYLIST, LIST_PROPERTY, RADIO_MIX, LaunchSpec
+from .radio import (
+    ADD_MESSAGE,
+    AI_RADIO,
+    LIKED_PLAYLIST,
+    LIST_PROPERTY,
+    RADIO_MIX,
+    UPNEXT_PROPERTY,
+    LaunchSpec,
+)
 from .store import MAX_VOLUME, Store
 
 T = TypeVar("T")
@@ -37,6 +46,14 @@ async def current_track(mpv: Mpv) -> dict | None:
 
 async def repeating(mpv: Mpv) -> bool:
     return await mpv.get("loop-file") not in (None, False, "no")
+
+
+async def repeating_all(mpv: Mpv) -> bool:
+    return await mpv.get("loop-playlist") not in (None, False, "no")
+
+
+async def upnext(mpv: Mpv) -> list[dict]:
+    return await mpv.get(UPNEXT_PROPERTY) or []
 
 
 def list_lines(
@@ -122,6 +139,39 @@ async def ai_radio(mood: str) -> list[Track]:
         raise Failure("none of the ai's songs were found")
     await start(tracks[0].id, queue=tracks, then_radio=True, source=AI_RADIO)
     return tracks
+
+
+async def enqueue(tracks: list[Track], where: str, source: str | None = None) -> bool:
+    """Play next / add to queue on the playing radio. With the radio off they just play: one
+    track as a radio, several (an album) in order and then a radio. True if they were queued.
+    """
+    if not tracks:
+        return False
+    items = json.dumps([[t.id, t.title] for t in tracks], ensure_ascii=False)
+    try:
+        await with_player(lambda mpv: mpv.command("script-message", ADD_MESSAGE, where, items))
+        return True
+    except NotRunning:
+        pass
+    if len(tracks) == 1:
+        await start(tracks[0].id)
+    else:
+        await start(tracks[0].id, queue=tracks, then_radio=True, source=source)
+    return False
+
+
+async def message(*args: str) -> None:
+    """Ask the radio to do something with its queue (see radio.Radio.on_message)."""
+    await with_player(lambda mpv: mpv.command("script-message", *args))
+
+
+async def set_repeat_all(on: bool) -> None:
+    """Repeat the whole queue. Only for the playing one: a new radio starts without it."""
+    await with_player(lambda mpv: mpv.set("loop-playlist", "inf" if on else "no"))
+
+
+async def seek(seconds: int) -> None:
+    await with_player(lambda mpv: mpv.command("seek", seconds, "relative"))
 
 
 async def stop() -> None:
