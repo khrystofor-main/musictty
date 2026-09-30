@@ -44,7 +44,7 @@ from .store import Playlist, PlaylistError, Store
 OBSERVED = ("media-title", "pause", "volume", "loop-file", "loop-playlist", "duration")
 OBSERVED += (LIST_PROPERTY, SOURCE_PROPERTY, UPNEXT_PROPERTY)
 
-# tab id -> title; keys 1-8 switch between them
+# tab id -> title; keys 1-9 switch between them
 TABS = {
     "radio": "Radio",
     "recent": "Recent",
@@ -54,6 +54,7 @@ TABS = {
     "lyrics": "Lyrics",
     "upnext": "Up next",
     "playlists": "Playlists",
+    "explore": "Explore",
 }
 NEW_PLAYLIST = "+ new playlist"  # the first row of the playlists tab
 SEEK_STEP = 10  # seconds
@@ -80,6 +81,33 @@ class TrackList(OptionList):
         super().__init__(markup=False, id=f"{kind}-list")
         self.kind = kind
         self.rows: list[Any] = []
+        # search and explore: the page shown (None: the results), and what it replaced, for ←
+        self.page: music.Page | None = None
+        self.back: list[tuple[list[Any], list[Any], music.Page | None]] = []
+
+    def replace(self, rows: list[Any], options: list[Any]) -> None:
+        """New rows with the cursor on the first that isn't a heading."""
+        self.rows = rows
+        self.set_options(options)
+        self.highlighted = next((i for i, row in enumerate(rows) if row is not None), None)
+
+    def push(self, page: music.Page, rows: list[Any], options: list[Any]) -> None:
+        options_now = [self.get_option_at_index(i) for i in range(self.option_count)]
+        self.back.append((self.rows, options_now, self.page))
+        self.page = page
+        self.replace(rows, options)
+
+    def pop(self) -> bool:
+        if not self.back:
+            return False
+        rows, options, self.page = self.back.pop()
+        self.replace(rows, options)
+        return True
+
+    def reset(self, rows: list[Any], options: list[Any]) -> None:
+        self.back.clear()
+        self.page = None
+        self.replace(rows, options)
 
     def show(self, rows: list[Any], lines: list[str], keep: Any = None, key=None) -> None:
         """Replace the rows, keeping the cursor on the same row when it's still there."""
@@ -117,8 +145,30 @@ def page_line(result: music.Result, page: music.Page, n: int | None) -> Text:
     return Text.assemble((f"{n:2}. ", "dim"), title, (f"  {result.detail}", "dim"))
 
 
-# rows of the search tab that open a page
+def page_rows(page: music.Page, back: bool) -> tuple[list[Any], list[Any]]:
+    """A page's rows (Results, None for the rest) and their lines."""
+    rows: list[Any] = [None]
+    lines: list[Any] = [heading(f"{page.title}  (← back)" if back else page.title)]
+    if page.detail:
+        rows.append(None)
+        lines.append(Option(Text(page.detail, style="dim"), disabled=True))
+    for section in page.sections:
+        rows.append(None)
+        lines.append(Option("", disabled=True))
+        if section.title:
+            rows.append(None)
+            lines.append(heading(section.title))
+        for n, result in enumerate(section.results, 1):
+            rows.append(result)
+            lines.append(page_line(result, page, n if section.numbered else None))
+    return rows, lines
+
+
+# the lists that show pages: ← goes back, → opens
+BROWSERS = {"search", "explore"}
+# rows of the search and explore tabs that open a page
 PAGES = {music.ARTISTS, music.ALBUMS, music.PLAYLISTS, music.MORE_SONGS, music.MORE_ALBUMS}
+PAGES |= {music.MOODS}
 # rows that stand for several tracks: they play in order, then a radio
 COLLECTIONS = {music.ALBUMS: ("album", ALBUM), music.PLAYLISTS: ("playlist", PLAYLIST)}
 
@@ -167,6 +217,7 @@ LIST_KEYS = {
         *QUEUE_KEYS,
     ],
     "search": [("enter", "play"), ("→", "open"), ("←", "back"), *QUEUE_KEYS],
+    "explore": [("enter", "play"), ("→", "open"), ("←", "back"), *QUEUE_KEYS],
     "lyrics": [],
     "upnext": [
         ("enter", "play now"),
@@ -240,9 +291,7 @@ class MusicApp(App):
         self.props: dict[str, Any] = {}
         self.position: float | None = None
         self.liked_ids: set[str] = set()  # refreshed with the lists
-        # the search tab: the page shown (None: the results) and what it replaced, for ←
-        self.search_page: music.Page | None = None
-        self.search_back: list[tuple[list[Any], list[Any], music.Page | None]] = []
+        self.explore_loaded = False  # the explore tab loads when it's first opened
         # the playlists tab: the playlist open in it, None for the list of them
         self.playlist_open: str | None = None
         # the lyrics tab: whose lyrics it shows, and the lyrics already fetched
@@ -459,6 +508,9 @@ class MusicApp(App):
     def tab_activated(self) -> None:
         self.refresh_lists()
         self.update_lyrics()
+        if self.query_one(TabbedContent).active == "explore" and not self.explore_loaded:
+            self.explore_loaded = True
+            self.run_worker(self.load_explore(), group="explore", exclusive=True)
         if not isinstance(self.focused, Input):
             self.active_list().focus()
 
@@ -518,16 +570,18 @@ class MusicApp(App):
                 self.run_worker(self.queue_message(PLAY_MESSAGE, str(row["entry"])))
             case "upnext", "delete":
                 self.run_worker(self.queue_message(REMOVE_MESSAGE, str(row["entry"])))
-            case "search", "left":
-                self.search_go_back()
-            case "search", "enter" if row.kind in COLLECTIONS:
+            case kind, "left" if kind in BROWSERS:
+                lst.pop()
+            case kind, "enter" if kind in BROWSERS and row.kind in COLLECTIONS:
                 self.run_worker(self.play_collection(row), group="launch", exclusive=True)
-            case "search", "enter" | "right" if row.kind in PAGES:
-                self.run_worker(self.open_page(row), group="search", exclusive=True)
-            case "search", "enter" | "right" if row.kind == music.RADIO:
+            case kind, "enter" | "right" if kind in BROWSERS and row.kind in PAGES:
+                self.run_worker(self.open_page(lst, row), group=kind, exclusive=True)
+            case kind, "enter" | "right" if kind in BROWSERS and row.kind == music.RADIO:
                 self.run_worker(self.artist_radio(row), group="launch", exclusive=True)
-            case "search", "enter" | "right" if row.kind == music.SONGS and self.plays_as():
-                self.play_from(lst, i, self.plays_as())
+            case kind, "enter" | "right" if (
+                kind in BROWSERS and row.kind == music.SONGS and lst.page and lst.page.plays_as
+            ):
+                self.play_from(lst, i, lst.page.plays_as)
             case "radio", "left":
                 # jump back here, keeping the queue
                 if not row.get("current"):
@@ -809,8 +863,8 @@ class MusicApp(App):
     def action_back(self) -> None:
         if isinstance(self.focused, Input):
             self.active_list().focus()
-        elif self.focused is self.track_list("search") and self.search_back:
-            self.search_go_back()
+        elif isinstance(self.focused, TrackList) and self.focused.pop():
+            pass  # back from a page
         elif self.focused is self.track_list("playlists") and self.playlist_open is not None:
             self.open_playlist(None)
         else:
@@ -877,10 +931,7 @@ class MusicApp(App):
     # --- search ---
 
     def show_search(self, rows: list[Any], options: list[Any]) -> None:
-        lst = self.track_list("search")
-        lst.rows = rows
-        lst.set_options(options)
-        lst.highlighted = next((i for i, row in enumerate(rows) if row is not None), None)
+        self.track_list("search").reset(rows, options)
 
     @on(Input.Submitted, "#search")
     def search(self, event: Input.Submitted) -> None:
@@ -907,8 +958,6 @@ class MusicApp(App):
         self.action_tab("radio")
 
     async def find(self, query: str) -> None:
-        self.search_back.clear()
-        self.search_page = None
         self.show_search([None], [heading(f"searching «{query}»…")])
         try:
             found = await asyncio.to_thread(music.search, query)
@@ -935,17 +984,32 @@ class MusicApp(App):
             rows, options = [None], [heading(f"nothing found: «{query}»")]
         self.show_search(rows, options)
 
-    async def open_page(self, row: music.Result) -> None:
-        """An artist's or an album's page, or all of an artist's songs or albums."""
-        name = self.search_page.title if self.search_page else ""
+    async def load_explore(self) -> None:
+        lst = self.track_list("explore")
+        lst.reset([None], [heading("loading explore…")])
+        try:
+            page = await asyncio.to_thread(music.explore)
+        except Exception:
+            page = music.Page("Explore")
+        if not page.sections:
+            self.explore_loaded = False  # the next visit tries again
+            lst.reset([None], [heading("could not load explore: open the tab again to retry")])
+            return
+        lst.reset(*page_rows(page, back=False))
+
+    async def open_page(self, lst: TrackList, row: music.Result) -> None:
+        """An artist's, an album's or a playlist's page, all of an artist's songs or albums,
+        the playlists of a mood."""
+        name = lst.page.title if lst.page else ""
         loaders: dict[str, Any] = {
             music.ARTISTS: lambda: music.artist(row.id),
             music.ALBUMS: lambda: music.album_page(row.id),
             music.PLAYLISTS: lambda: music.playlist_page(row.id),
-            music.MORE_SONGS: lambda: music.artist_songs(row.id, name),
+            music.MORE_SONGS: lambda: music.songs_page(row.id, row.params),
             music.MORE_ALBUMS: lambda: music.artist_albums(
                 row.id, row.params, name, row.title.removeprefix("all ")
             ),
+            music.MOODS: lambda: music.mood_playlists(row.id, row.title),
         }
         self.notify(f"opening {row.title}…", timeout=2)
         try:
@@ -956,33 +1020,7 @@ class MusicApp(App):
         if not any(section.results for section in page.sections):
             self.notify(f"nothing on {row.title}")
             return
-        lst = self.track_list("search")
-        options = [lst.get_option_at_index(i) for i in range(lst.option_count)]
-        self.search_back.append((lst.rows, options, self.search_page))
-        self.search_page = page
-        rows: list[Any] = [None]
-        lines: list[Any] = [heading(f"{page.title}  (← back)")]
-        if page.detail:
-            rows.append(None)
-            lines.append(Option(Text(page.detail, style="dim"), disabled=True))
-        for section in page.sections:
-            rows.append(None)
-            lines.append(Option("", disabled=True))
-            if section.title:
-                rows.append(None)
-                lines.append(heading(section.title))
-            for n, result in enumerate(section.results, 1):
-                rows.append(result)
-                lines.append(page_line(result, page, n if section.numbered else None))
-        self.show_search(rows, lines)
-
-    def plays_as(self) -> str:
-        return self.search_page.plays_as if self.search_page else ""
-
-    def search_go_back(self) -> None:
-        if self.search_back:
-            rows, options, self.search_page = self.search_back.pop()
-            self.show_search(rows, options)
+        lst.push(page, *page_rows(page, back=True))
 
     def play_from(self, lst: TrackList, i: int, source: str) -> None:
         """A song on an album's page (or a list of songs): the rest of them from it, then a

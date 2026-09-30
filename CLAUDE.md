@@ -37,7 +37,8 @@ in the user runtime dir elsewhere). Its clients:
   artists (`music.py`); an album plays as a queue that turns into a radio
   (`LaunchSpec.then_radio`: no mixes until it has played out, then a normal radio). Artists
   and albums open as pages (`music.Page`: a title, a detail line, sections of `Result`s) in
-  the same tab, stacked in `search_back` for ←. The Playlists tab lists your playlists (or
+  the same tab, stacked on the list (`TrackList.push/pop`) for ←. The Explore tab is the same
+  kind of list (`BROWSERS`), filled once by `music.explore()`. The Playlists tab lists your playlists (or
   the one open); `S` saves any row's tracks to one through `dialogs.Pick`. Modal dialogs
   (a name, a pick, yes/no) are in `dialogs.py`. The
   Lyrics tab loads the playing track's lyrics (`music.lyrics`, cached) while it is open and

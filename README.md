@@ -28,12 +28,13 @@ songs, and never stops until you tell it to. Windows, macOS and Linux.
 ## The player
 
 `musictty` on its own opens the player: what's playing, the current radio, recent radios,
-history, liked tracks, search, lyrics, what's up next and your playlists. The bar at the bottom shows the keys,
+history, liked tracks, search, lyrics, what's up next, your playlists and YouTube Music's
+Explore. The bar at the bottom shows the keys,
 the second line those of the list you're in.
 
 Keys: `space` pause, `n`/`p` next and previous, `+`/`-` volume, `,`/`.` seek 10 seconds
 back and forward, `l` like, `r` repeat the track, `R` repeat the whole queue, `x` shuffle
-what's up next, `s` stop, `/` search, `a` AI radio, `1`–`8` tabs, `q` quit (the music keeps
+what's up next, `s` stop, `/` search, `a` AI radio, `1`–`9` tabs, `q` quit (the music keeps
 playing).
 
 In the lists, `enter` starts a radio from a track, `e` adds it to the queue and `E` plays it
@@ -54,6 +55,11 @@ opens a playlist (`enter` plays it from that track), an album's page
 (its tracks: `enter` plays the album from that one) and an artist's page: their radio, top
 songs, albums, singles and similar artists, with the full lists one `→` further. `←` goes
 back.
+
+**Explore** (tab `9`) is YouTube Music's: new releases, trending songs, the charts and their
+top artists, moods and genres (`→` on one lists its playlists). It opens like the search:
+`enter` plays, `→` opens, `←` goes back. The charts are global; `MUSICTTY_CHARTS=DE` (any
+country code) picks a country's.
 
 **Playlists** (tab `8`) are your own, kept on your machine: `+ new playlist` makes one, `S`
 on any track adds it, `enter` plays one (then a radio goes on), `→` opens it to reorder
@@ -122,6 +128,7 @@ still use it).
 - [x] Lyrics, synced with the song
 - [x] Queue: up next, play next, add to queue, shuffle, repeat all, seek
 - [x] Playlists: YouTube Music's in search, your own in the player
+- [x] Explore: new releases, charts, moods and genres
 - [x] AI radio: describe a mood in plain words, and a language model picks the songs
 - [ ] Album art in the terminal
 
