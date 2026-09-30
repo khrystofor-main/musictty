@@ -29,19 +29,18 @@ songs, and never stops until you tell it to. Windows, macOS and Linux.
 
 `musictty` on its own opens the player: what's playing, the current radio, recent radios,
 history, liked tracks, search, lyrics, what's up next, your playlists and YouTube Music's
-Home and Explore. The bar at the bottom shows the keys,
-the second line those of the list you're in.
+Home and Explore. The bar at the bottom shows the keys: the player's, then those of the list
+you're in.
 
 Keys: `space` pause, `n`/`p` next and previous, `+`/`-` volume, `,`/`.` seek 10 seconds
 back and forward, `l` like, `r` repeat the track, `R` repeat the whole queue, `x` shuffle
-what's up next, `s` stop, `/` search, `a` AI radio, `1`–`9` tabs, `q` quit (the music keeps
-playing).
+what's up next, `s` stop, `z` sleep timer, `Q` audio quality, `/` search, `a` AI radio,
+`1`–`9` tabs, `q` quit (the music keeps playing).
 
-In the lists, `enter` starts a radio from a track, `e` adds it to the queue and `E` plays it
-next, `S` saves it to one of your playlists (an album or a playlist from the search goes in
-whole). `←` jumps back in the current radio; in
-liked, `→` plays them in a loop from that track and `←` does the same with it on repeat,
-`delete` removes it.
+In the lists, `enter` starts a radio from a track, `e` adds it to the queue, `E` plays it
+next and `S` saves it to one of your playlists (an album or a playlist from the search goes
+in whole). `←` jumps back in the current radio; in liked, `→` plays them in a loop from
+that track and `←` does the same with it on repeat, `delete` removes it.
 
 **Up next** (tab `7`) is what plays after the current track: the queue first (what you added,
 the rest of an album or a playlist), then the radio's own picks. `enter` plays a track now
@@ -49,13 +48,16 @@ the rest of an album or a playlist), then the radio's own picks. `enter` plays a
 `delete` removes it. The radio keeps adding picks once the queue has played out; with repeat
 all it adds nothing and the queue starts over.
 
-**Search** (`/`) suggests as you type, like YouTube Music (`↓` goes into the suggestions,
-`enter` searches the one under the cursor), and finds songs, albums, artists and playlists: a song starts a radio,
-an album or a playlist plays in order and then turns into a radio from its last track. `→`
-opens a playlist (`enter` plays it from that track), an album's page
-(its tracks: `enter` plays the album from that one) and an artist's page: their radio, top
-songs, albums, singles and similar artists, with the full lists one `→` further. `←` goes
-back.
+**Search** (`/`) suggests as you type, like YouTube Music: `↓` goes into the suggestions and
+`enter` searches the one under the cursor. It finds songs, albums, artists and playlists: a
+song starts a radio, an album or a playlist plays in order and then turns into a radio from
+its last track. `→` opens a playlist or an album (`enter` on a track plays from there) and
+an artist's page: their radio, top songs, albums, singles and similar artists, with the full
+lists one `→` further. `←` goes back.
+
+**Playlists** (tab `8`) are your own, kept on your machine: `+ new playlist` makes one, `S`
+on any track adds it, `enter` plays one (then a radio goes on), `→` opens it to reorder
+(`shift+↑`/`shift+↓`) or remove tracks, `delete` on a playlist deletes it (after asking).
 
 **Home** (tab `9`) is YouTube Music's Home and Explore, as it shows them without an account:
 its rows (quick picks, mixes and the like), then new releases, trending songs, the charts and
@@ -63,9 +65,11 @@ their top artists, moods and genres (`→` on one lists its playlists). It opens
 search: `enter` plays, `→` opens, `←` goes back. The charts are global;
 `MUSICTTY_CHARTS=DE` (any country code) picks a country's.
 
-**Playlists** (tab `8`) are your own, kept on your machine: `+ new playlist` makes one, `S`
-on any track adds it, `enter` plays one (then a radio goes on), `→` opens it to reorder
-(`shift+↑`/`shift+↓`) or remove tracks, `delete` on a playlist deletes it (after asking).
+**Sleep timer** (`z`): the radio stops in 15 minutes to an hour and a half, fading out over
+the last half minute, or after the track that's playing. It runs in the background process,
+so it works with the player closed. **Audio quality** (`Q`): low (about 50–70 kbit/s), normal
+(about 130–160 kbit/s, the default) or high (the best stream YouTube has); it applies to the
+tracks to come and to every radio after.
 
 **Lyrics** (tab `6`) follow the song line by line when YouTube Music has them timed, and
 show as plain text otherwise.
@@ -96,6 +100,7 @@ musictty upnext               # what's coming up; `musictty upnext remove 2` tak
 musictty liked play 2         # liked tracks in a loop, from the second one down
 musictty playlists            # your playlists; `playlists play 1`, `playlists add 1`
 musictty seek +30 | shuffle | repeat all on
+musictty sleep 30 | sleep end | sleep off | quality low
 musictty next | prev | pause | play | stop | like | mem
 ```
 
@@ -132,6 +137,7 @@ still use it).
 - [x] Playlists: YouTube Music's in search, your own in the player
 - [x] Home and Explore: new releases, charts, moods and genres
 - [x] Search suggestions
+- [x] Sleep timer, audio quality
 - [x] AI radio: describe a mood in plain words, and a language model picks the songs
 - [ ] Album art in the terminal
 

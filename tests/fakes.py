@@ -37,6 +37,7 @@ class FakeMpv:
         self.next_id = 1
         self.log: list = []
         self.closed = False
+        self.quit = False
         self.events: asyncio.Queue = asyncio.Queue()
 
     # helpers for tests
@@ -74,6 +75,8 @@ class FakeMpv:
             self.play(int(rest[0]))
         elif name == "observe_property":
             pass  # the tests send the property-change events themselves
+        elif name == "quit":
+            self.quit = True
         else:
             raise AssertionError(f"unexpected command {cmd}")
         return None
@@ -126,6 +129,7 @@ class FakeSource:
         self.mixes = mixes or {}
         self.bad = bad  # ids whose streams answer 403
         self.resolved: list[str] = []
+        self.formats: list[str | None] = []
         self.mixed: list[str] = []
 
     def title(self, video_id: str) -> str:
@@ -134,8 +138,9 @@ class FakeSource:
     def stream(self, video_id: str) -> Stream:
         return Stream(video_id, f"player title {video_id}", f"https://stream/{video_id}", "UA")
 
-    def resolve(self, video_id):
+    def resolve(self, video_id, fmt=None):
         self.resolved.append(video_id)
+        self.formats.append(fmt)
         return self.stream(video_id)
 
     def mix(self, seed, limit):

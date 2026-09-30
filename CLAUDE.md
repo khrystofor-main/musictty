@@ -60,6 +60,10 @@ in the user runtime dir elsewhere). Its clients:
   queue" goes after it, and no mix is fetched while any of it is still ahead. Repeat all is
   mpv's `loop-playlist`, observed by the radio (no mixes, no trimming while it's on); it's
   per queue, not saved in settings, unlike repeat (`loop-file`).
+- The sleep timer lives in the radio too (`musictty-sleep` seconds or `end`), so it works
+  with the UI closed; it publishes `user-data/musictty/sleep` and fades out before `quit`.
+  The audio quality is a setting (`youtube.FORMATS`), passed in the LaunchSpec and sent to a
+  running radio with `musictty-quality`.
 
 Other modules: `control.py` (start/stop a radio, volume, repeat: shared by CLI and UI),
 `ai.py` (AI radio: an OpenAI-compatible chat API turns a mood into "Artist - Title" songs;
@@ -70,7 +74,7 @@ the daemon), `youtube.py` (yt-dlp as a library; blocking, run in a thread),
 `store.py` (data files, v0 import), `paths.py`, `mpv.conf`.
 
 Data in the user data dir (platformdirs), same `date<TAB>id<TAB>title` lines as v0:
-`seeds.tsv`, `plays.tsv`, `liked.tsv`, `settings.json` (volume, repeat), `playlists.json`
+`seeds.tsv`, `plays.tsv`, `liked.tsv`, `settings.json` (volume, repeat, quality), `playlists.json`
 (your playlists: names and `[id, title]` tracks), `radio.log`
 (the daemons' log: appended, never truncated under a still-running old daemon; past 512 KB
 it moves to `radio.log.1`). The radio publishes its pid in `user-data/musictty/pid` for

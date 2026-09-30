@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import pytest
 from fakes import FakeMpv, FakeSource, parse_options, tid
@@ -510,3 +511,93 @@ def test_removing_a_track_queued_twice_keeps_the_other(store):
 
     mpv, radio = run(scenario())
     assert [it["id"] for it in mpv.props[UPNEXT_PROPERTY]] == [A, B, C]
+
+
+# --- the sleep timer, the audio quality ---
+
+
+def test_sleep_timer_turns_the_volume_down_and_stops(store, monkeypatch):
+    monkeypatch.setattr(radio_module, "FADE_SECONDS", 0.2)
+    source = FakeSource({S: [S, A]})
+    volumes = []
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        mpv.props["volume"] = 80
+        await message(radio, "musictty-sleep", "0.3")
+        deadline = float(mpv.props[radio_module.SLEEP_PROPERTY])
+        assert 0 < deadline - time.time() <= 0.3
+        while not mpv.quit:
+            volumes.append(mpv.props["volume"])
+            await asyncio.sleep(0.01)
+        return mpv
+
+    mpv = run(scenario())
+    assert volumes[0] == 80 and any(0 < v < 80 for v in volumes)  # down, then it stops
+    assert mpv.props["volume"] == 0
+
+
+def test_a_new_sleep_timer_replaces_the_old_one(store, monkeypatch):
+    monkeypatch.setattr(radio_module, "FADE_SECONDS", 1.0)
+    source = FakeSource({S: [S, A]})
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        mpv.props["volume"] = 80
+        await message(radio, "musictty-sleep", "1")
+        await asyncio.sleep(0.3)  # fading already
+        assert mpv.props["volume"] < 80
+        await message(radio, "musictty-sleep", "0")  # off: the volume comes back
+        await asyncio.sleep(0.05)
+        assert mpv.props["volume"] == 80 and mpv.props[radio_module.SLEEP_PROPERTY] == ""
+        await message(radio, "musictty-sleep", "end")
+        assert mpv.props[radio_module.SLEEP_PROPERTY] == "end"
+        await asyncio.sleep(1.1)
+        assert not mpv.quit  # the earlier timer is gone
+        await radio.handle({"event": "end-file", "reason": "stop"})  # next: not the end
+        assert not mpv.quit
+        await radio.handle({"event": "end-file", "reason": "eof"})  # the track is over
+        return mpv
+
+    assert run(scenario()).quit
+
+
+def test_audio_quality(store):
+    source = FakeSource({S: [S, A, B]})
+    spec = LaunchSpec(seed=S, stream=source.stream(S), quality="low")
+    assert LaunchSpec.from_json(spec.to_json()) == spec
+    assert "--ytdl-format=worstaudio[acodec=opus]/worstaudio/worst" in player.mpv_command(
+        "mpv", "addr", spec
+    )
+
+    async def scenario():
+        mpv, radio = await started(spec, source, store)
+        await message(radio, "musictty-quality", "high")
+        await load(mpv, radio, 1)
+        await message(radio, "musictty-quality", "bogus")  # ignored
+        return mpv
+
+    mpv = run(scenario())
+    # the next track was resolved at the start; the ones after the change in the new quality
+    assert source.formats[0] == "worstaudio[acodec=opus]/worstaudio/worst"
+    assert set(source.formats[1:]) == {"bestaudio/best"}
+    assert mpv.props["ytdl-format"] == "bestaudio/best"
+
+
+def test_a_new_radio_keeps_the_sleep_timer(store):
+    source = FakeSource({S: [S, A]})
+
+    async def scenario(sleep):
+        spec = LaunchSpec(seed=S, stream=source.stream(S), sleep=sleep)
+        assert LaunchSpec.from_json(spec.to_json()) == spec
+        mpv, radio = await started(spec, source, store)
+        if radio.sleep_task:
+            radio.sleep_task.cancel()
+        return mpv.props.get(radio_module.SLEEP_PROPERTY), radio.sleep_at_end
+
+    deadline = time.time() + 600
+    value, _ = run(scenario(str(deadline)))
+    assert abs(float(value) - deadline) < 1  # the same time as before
+    assert run(scenario("end")) == ("end", True)
+    assert run(scenario(str(time.time() - 5))) == (None, False)  # over already
+    assert run(scenario("")) == (None, False)

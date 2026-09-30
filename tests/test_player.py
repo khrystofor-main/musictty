@@ -120,6 +120,9 @@ def test_radio_and_commands_on_a_real_player(files, capsys):
         # the queue: A once more, right after the current track
         title = source.title
 
+        async def has_format(fmt):
+            return await mpv.get("ytdl-format") == fmt
+
         async def upnext(*ids):
             return [it["id"] for it in await mpv.get(UPNEXT_PROPERTY) or []] == list(ids)
 
@@ -134,6 +137,15 @@ def test_radio_and_commands_on_a_real_player(files, capsys):
         assert await command("repeat", "all", "off") == (0, "")
         assert await command("seek", "+10") == (0, "")
         assert await mpv.get("time-pos") >= 10
+        assert await command("sleep", "30") == (0, "")
+        code, out = await command("now")
+        assert out.startswith(f"{title(S)} · radio mix · sleep 29:") or "sleep 30:00" in out
+        assert await command("sleep", "end") == (0, "")
+        assert await command("now") == (0, f"{title(S)} · radio mix · sleep after this track\n")
+        assert await command("sleep", "off") == (0, "")
+        assert await command("now") == (0, f"{title(S)} · radio mix\n")
+        assert await command("quality", "low") == (0, "")
+        await until(lambda: has_format("worstaudio[acodec=opus]/worstaudio/worst"))
         assert await command("upnext", "2") == (0, "")  # B now, A still next
         await until(lambda: played(B, S, A, S))
         assert await current() == B
@@ -155,7 +167,7 @@ def test_background_radio_starts_replaces_and_stops(files, monkeypatch, capsys):
     monkeypatch.setattr(
         youtube,
         "resolve",
-        lambda video_id: Stream(video_id, f"Локально — {video_id}", files[video_id]),
+        lambda video_id, fmt=None: Stream(video_id, f"Локально — {video_id}", files[video_id]),
     )
 
     def now():
@@ -171,9 +183,17 @@ def test_background_radio_starts_replaces_and_stops(files, monkeypatch, capsys):
     assert cli.main([S]) == 0
     assert now() == f"Локально — {S} · radio mix\n"
 
-    # a new radio replaces the playing one
+    # a new radio replaces the playing one, and keeps its sleep timer
+    assert cli.main(["sleep", "30"]) == 0
+    for _ in range(100):  # the radio has taken it
+        cli.main(["now"])
+        if "sleep" in capsys.readouterr().out:
+            break
+        time.sleep(0.05)
     assert cli.main([f"https://youtu.be/{A}"]) == 0
-    assert now() == f"Локально — {A} · radio mix\n"
+    out = now()
+    assert out.startswith(f"Локально — {A} · radio mix · sleep ")
+    assert "sleep 29:" in out or "sleep 30:00" in out
 
     assert cli.main(["stop"]) == 0
     assert not asyncio.run(player.is_running(paths.ipc_address()))

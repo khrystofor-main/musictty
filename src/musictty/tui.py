@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from typing import Any
 
 from rich.text import Text
@@ -21,7 +22,7 @@ from textual.widgets.option_list import Option
 
 from . import control, music, paths, player
 from .control import Failure
-from .dialogs import Ask, Confirm, Pick
+from .dialogs import Ask, Choose, Confirm, Pick
 from .ipc import Mpv, MpvError, NotRunning
 from .models import Track
 from .radio import (
@@ -37,13 +38,31 @@ from .radio import (
     RADIO_MIX,
     REMOVE_MESSAGE,
     SHUFFLE_MESSAGE,
+    SLEEP_END,
+    SLEEP_MESSAGE,
+    SLEEP_PROPERTY,
     SOURCE_PROPERTY,
     UPNEXT_PROPERTY,
 )
 from .store import Playlist, PlaylistError, Store
 
 OBSERVED = ("media-title", "pause", "volume", "loop-file", "loop-playlist", "duration")
-OBSERVED += (LIST_PROPERTY, SOURCE_PROPERTY, UPNEXT_PROPERTY)
+OBSERVED += (LIST_PROPERTY, SOURCE_PROPERTY, UPNEXT_PROPERTY, SLEEP_PROPERTY)
+# the sleep timer's choices: seconds, or the end of the track
+SLEEP_CHOICES = [
+    ("off", "0"),
+    ("in 15 minutes", "900"),
+    ("in 30 minutes", "1800"),
+    ("in 45 minutes", "2700"),
+    ("in 1 hour", "3600"),
+    ("in 1.5 hours", "5400"),
+    ("after this track", SLEEP_END),
+]
+QUALITY_LABELS = {
+    "low": "low · about 50–70 kbit/s, saves traffic",
+    "normal": "normal · about 130–160 kbit/s",
+    "high": "high · the best stream there is",
+}
 
 # tab id -> title; keys 1-9 switch between them
 TABS = {
@@ -206,7 +225,7 @@ PLAYER_KEYS = [
     ("x", "shuffle"),
     ("s", "stop"),
 ]
-QUEUE_KEYS = [("e/E", "queue/next"), ("S", "to playlist")]
+QUEUE_KEYS = [("e/E", "queue/next"), ("S", "save")]
 LIST_KEYS = {
     "radio": [("enter", "radio"), ("←", "jump back"), *QUEUE_KEYS],
     "recent": [("enter", "radio"), *QUEUE_KEYS],
@@ -221,11 +240,11 @@ LIST_KEYS = {
     "explore": [("enter", "play"), ("→", "open"), ("←", "back"), *QUEUE_KEYS],
     "lyrics": [],
     "upnext": [
-        ("enter", "play now"),
-        ("E", "to the top"),
+        ("enter", "play"),
+        ("E", "top"),
         ("shift+↑/↓", "move"),
         ("del", "remove"),
-        ("S", "to playlist"),
+        ("S", "save"),
     ],
     "playlists": [("enter", "play"), ("→", "open"), ("del", "delete")],
     "playlist": [
@@ -236,7 +255,7 @@ LIST_KEYS = {
         ("e/E", "queue/next"),
     ],
 }
-APP_KEYS = [("/", "search"), ("a", "ai radio"), ("q", "quit")]
+APP_KEYS = [("/", "search"), ("a", "ai"), ("z", "sleep"), ("Q", "quality"), ("q", "quit")]
 INPUT_KEYS = [("enter", "go"), ("esc", "back")]
 SEARCH_KEYS = [("enter", "search"), ("↓", "suggestions"), ("esc", "back")]
 SUGGESTION_KEYS = [("enter", "search this"), ("esc", "back to typing")]
@@ -278,6 +297,8 @@ class MusicApp(App):
         Binding("e", f"enqueue('{ADD_TO_QUEUE}')", "queue"),
         Binding("E,shift+e", f"enqueue('{PLAY_NEXT}')", "play next", key_display="E"),
         Binding("S,shift+s", "save", "to playlist", key_display="S"),
+        Binding("z", "sleep", "sleep timer"),
+        Binding("Q,shift+q", "quality", "audio quality", key_display="Q"),
         Binding("shift+up", "move(-1)", "up", show=False),
         Binding("shift+down", "move(1)", "down", show=False),
         Binding("slash", "search", "search", key_display="/"),
@@ -402,6 +423,8 @@ class MusicApp(App):
             details.append(marks.strip())
         if self.repeating_all():
             details.append("repeat all")
+        if sleep := control.sleep_text(self.props.get(SLEEP_PROPERTY), time.time()):
+            details.append(sleep)
         details.append(f"{clock(self.position)} / {clock(duration)}")
         volume = self.props.get("volume")
         if volume is not None:
@@ -788,6 +811,36 @@ class MusicApp(App):
             return
         with contextlib.suppress(MpvError):
             await control.set_repeat_all(not self.repeating_all())
+
+    def action_sleep(self) -> None:
+        """z: the sleep timer, kept by the radio itself."""
+        if not self.mpv:
+            self.notify("radio is off")
+            return
+        # the choice marked: "off" when there's no timer, "after this track"; none for a time
+        value = self.props.get(SLEEP_PROPERTY)
+        timer = control.sleep_text(value, time.time())
+        current = len(SLEEP_CHOICES) - 1 if value == SLEEP_END else (None if timer else 0)
+
+        def chosen(index: int | None) -> None:
+            if index is not None:
+                self.run_worker(self.queue_message(SLEEP_MESSAGE, SLEEP_CHOICES[index][1]))
+
+        labels = [label for label, _ in SLEEP_CHOICES]
+        self.push_screen(Choose("sleep timer: stop the radio", labels, current), chosen)
+
+    def action_quality(self) -> None:
+        """Q: the audio quality, for the tracks to come and the next radios."""
+        qualities = list(QUALITY_LABELS)
+        current = qualities.index(Store().settings().quality)
+
+        def chosen(index: int | None) -> None:
+            if index is None:
+                return
+            self.run_worker(control.set_quality(qualities[index]))
+            self.notify(f"audio quality: {qualities[index]}", timeout=3)
+
+        self.push_screen(Choose("audio quality", list(QUALITY_LABELS.values()), current), chosen)
 
     async def action_seek(self, seconds: int) -> None:
         await self.player_command("seek", seconds, "relative")

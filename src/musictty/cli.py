@@ -30,6 +30,7 @@ from .radio import (
     RADIO_MIX,
     REMOVE_MESSAGE,
     SHUFFLE_MESSAGE,
+    SLEEP_END,
     SOURCE_PROPERTY,
 )
 from .store import (
@@ -94,6 +95,11 @@ musictty — endless music radio in the terminal
   musictty repeat off          stop repeating
   musictty repeat all on|off   repeat the whole queue (the radio stops adding tracks)
   musictty seek <±seconds>     seek in the track: seek +10, seek -10
+  musictty sleep <minutes>     stop the radio in n minutes (the sound fades out)
+  musictty sleep end           stop it after the track that's playing
+  musictty sleep off           no sleep timer
+  musictty quality             the audio quality: low, normal or high
+  musictty quality <level>     set it (for the tracks to come, and the next radios)
   musictty vol+ / vol-         volume ±5
   musictty stop                stop the radio
 
@@ -124,6 +130,7 @@ SIMPLE = {
     "upnext",
     "shuffle",
     "playlists",
+    "quality",
 }
 QUEUE_ACTIONS = {PLAY_NEXT, ADD_TO_QUEUE}
 LIST_ACTIONS = {
@@ -181,6 +188,13 @@ def parse(argv: list[str]) -> Call:
         return Call("repeat", text=rest[0])
     if head == "repeat" and rest in (["all", "on"], ["all", "off"]):
         return Call("repeat", text=rest[1], action="all")
+    if head == "sleep" and len(rest) == 1:
+        if rest[0] in (SLEEP_END, "off"):
+            return Call("sleep", text=rest[0])
+        if (n := _number(rest[0])) is not None:
+            return Call("sleep", number=n)
+    if head == "quality" and len(rest) == 1 and rest[0] in youtube.QUALITIES:
+        return Call("quality", text=rest[0])
     if head == "seek" and len(rest) == 1 and SECONDS.fullmatch(rest[0]):
         return Call("seek", number=int(rest[0]))
     if head == "playlists" and rest[0] == "new" and len(rest) > 1:
@@ -279,6 +293,8 @@ def cmd_now(call: Call) -> None:
         source = await mpv.get(SOURCE_PROPERTY) or RADIO_MIX
         if await control.repeating_all(mpv):
             source += " · repeat all"
+        if sleep := await control.sleep_status(mpv):
+            source += f" · {sleep}"
         return f"{mark}{title} · {source}"
 
     print(on_player(now))
@@ -404,6 +420,24 @@ def cmd_repeat(call: Call) -> None:
     asyncio.run(control.set_repeat(call.text == "on"))
 
 
+def cmd_sleep(call: Call) -> None:
+    if call.text == "off":
+        when = "0"
+    elif call.text == SLEEP_END:
+        when = SLEEP_END
+    else:
+        assert call.number is not None
+        when = str(call.number * 60)
+    asyncio.run(control.set_sleep(when))
+
+
+def cmd_quality(call: Call) -> None:
+    if call.text is None:
+        print(Store().settings().quality)
+        return
+    asyncio.run(control.set_quality(call.text))
+
+
 def cmd_seek(call: Call) -> None:
     assert call.number is not None
     asyncio.run(control.seek(call.number))
@@ -494,6 +528,8 @@ COMMANDS: dict[str, Callable[[Call], int | None]] = {
     "playlists": cmd_playlists,
     "repeat": cmd_repeat,
     "seek": cmd_seek,
+    "sleep": cmd_sleep,
+    "quality": cmd_quality,
     "vol+": cmd_volume,
     "vol-": cmd_volume,
     "next": cmd_playback,

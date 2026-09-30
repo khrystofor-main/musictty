@@ -48,6 +48,11 @@ S, A, B = (tid(n) for n in range(3))
         (["history", "next", "2"], Call("history", number=2, action="next")),
         (["liked", "queue", "3"], Call("liked", number=3, action="queue")),
         (["liked", "next", "1"], Call("liked", number=1, action="next")),
+        (["sleep", "30"], Call("sleep", number=30)),
+        (["sleep", "end"], Call("sleep", text="end")),
+        (["sleep", "off"], Call("sleep", text="off")),
+        (["quality"], Call("quality")),
+        (["quality", "low"], Call("quality", text="low")),
         (["playlists"], Call("playlists")),
         (["playlists", "2"], Call("playlists", number=2)),
         (["playlists", "play", "1"], Call("playlists", number=1, action="play")),
@@ -86,6 +91,10 @@ def test_parse(argv, call):
         ["seek", "ten"],
         ["seek", "1.5"],
         ["liked", "play"],
+        ["sleep"],
+        ["sleep", "0"],
+        ["sleep", "soon"],
+        ["quality", "ultra"],
         ["playlists", "new"],
         ["playlists", "remove", "1"],
         ["playlists", "play"],
@@ -229,3 +238,20 @@ def test_playlists(capsys, monkeypatch):
     assert [p.name for p in Store().playlists()] == ["Road trip"]
     queue = [Track(S, "s"), Track(A, "a")]
     assert started == [(S, {"queue": queue, "then_radio": True, "source": "playlist"})]
+
+
+def test_quality_is_remembered_with_the_radio_off(capsys):
+    assert cli.main(["quality"]) == 0
+    assert cli.main(["quality", "low"]) == 0
+    assert cli.main(["quality"]) == 0
+    assert capsys.readouterr().out == "normal\nlow\n"
+    assert Store().settings().quality == "low"
+    assert cli.main(["sleep", "30"]) == 1  # no radio, no timer: quietly
+
+
+def test_sleep_text():
+    assert control.sleep_text("", 100) == ""
+    assert control.sleep_text(None, 100) == ""
+    assert control.sleep_text("end", 100) == "sleep after this track"
+    assert control.sleep_text("1000.5", 100) == "sleep 15:00"
+    assert control.sleep_text("50", 100) == ""  # over
