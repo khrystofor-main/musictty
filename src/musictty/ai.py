@@ -20,7 +20,11 @@ from dataclasses import dataclass
 # name -> (API base URL, model, the environment variable with its key)
 PROVIDERS = {
     "deepseek": ("https://api.deepseek.com", "deepseek-chat", "DEEPSEEK_API_KEY"),
-    "nous": ("https://inference-api.nousresearch.com/v1", "Hermes-4-70B", "NOUS_API_KEY"),
+    "nous": (
+        "https://inference-api.nousresearch.com/v1",
+        "google/gemini-3.8-flash",
+        "NOUS_API_KEY",
+    ),
 }
 
 SONGS = 8
@@ -55,7 +59,7 @@ def config() -> Config:
     key = env.get("MUSICTTY_AI_KEY") or env.get(var)
     if not key:
         keys = " or ".join(v for *_, v in PROVIDERS.values())
-        raise AIError(f"no ai key: set {keys}")
+        raise AIError(f"no ai key: set {keys} (after setx, open a new terminal)")
     return Config(
         provider=name,
         url=(env.get("MUSICTTY_AI_URL") or url).rstrip("/"),

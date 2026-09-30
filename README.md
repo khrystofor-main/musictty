@@ -69,7 +69,7 @@ It works with any OpenAI-compatible API; set the key of one of the presets:
 
 ```powershell
 setx DEEPSEEK_API_KEY "sk-..."     # DeepSeek (deepseek-chat)
-setx NOUS_API_KEY "..."            # or Nous Portal (Hermes)
+setx NOUS_API_KEY "..."            # or Nous Portal (google/gemini-3.8-flash)
 ```
 
 `MUSICTTY_AI_PROVIDER` picks one when both are set; `MUSICTTY_AI_URL`, `MUSICTTY_AI_MODEL` and
