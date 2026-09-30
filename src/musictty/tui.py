@@ -157,7 +157,7 @@ def page_line(result: music.Result, page: music.Page, n: int | None) -> Text:
     """A row of an artist's or an album's page."""
     if result.kind == music.RADIO:
         return Text.assemble("▶ ", result.title)
-    if result.kind in (music.MORE_SONGS, music.MORE_ALBUMS):
+    if result.kind in (music.MORE_SONGS, music.MORE_ALBUMS, music.MORE_RESULTS):
         return Text.assemble((result.title, "italic"), ("  →", "dim"))
     if n is None:
         return result_line(result)
@@ -189,7 +189,7 @@ def page_rows(page: music.Page, back: bool) -> tuple[list[Any], list[Any]]:
 BROWSERS = {"search", "explore"}
 # rows of the search and explore tabs that open a page
 PAGES = {music.ARTISTS, music.ALBUMS, music.PLAYLISTS, music.MORE_SONGS, music.MORE_ALBUMS}
-PAGES |= {music.MOODS}
+PAGES |= {music.MOODS, music.MORE_RESULTS}
 # rows that stand for several tracks: they play in order, then a radio
 COLLECTIONS = {music.ALBUMS: ("album", ALBUM), music.PLAYLISTS: ("playlist", PLAYLIST)}
 
@@ -1150,20 +1150,24 @@ class MusicApp(App):
             return
         rows: list[Any] = []
         options: list[Any] = []
-        for title, results in (
-            ("Songs", found.songs),
-            ("Albums", found.albums),
-            ("Artists", found.artists),
-            ("Playlists", found.playlists),
+        for kind, results in (
+            ("songs", found.songs),
+            ("albums", found.albums),
+            ("artists", found.artists),
+            ("playlists", found.playlists),
         ):
             if results:
                 if rows:
                     rows.append(None)
                     options.append(Option("", disabled=True))
                 rows.append(None)
-                options.append(heading(title))
+                options.append(heading(kind.capitalize()))
                 rows += results
                 options += [result_line(r) for r in results]
+                if len(results) >= music.SEARCH_LIMIT:  # there may be more
+                    more = music.Result(music.MORE_RESULTS, query, f"all {kind}", params=kind)
+                    rows.append(more)
+                    options.append(page_line(more, music.Page(""), None))
         if not rows:
             rows, options = [None], [heading(f"nothing found: «{query}»")]
         self.show_search(rows, options)
@@ -1194,6 +1198,7 @@ class MusicApp(App):
                 row.id, row.params, name, row.title.removeprefix("all ")
             ),
             music.MOODS: lambda: music.mood_playlists(row.id, row.title),
+            music.MORE_RESULTS: lambda: music.search_more(row.id, row.params),
         }
         self.notify(f"opening {row.title}…", timeout=2)
         try:

@@ -734,3 +734,33 @@ def test_go_to_the_artist_or_the_album(monkeypatch):
             await pilot.press("q")
 
     asyncio.run(scenario())
+
+
+def test_all_results_of_a_kind(monkeypatch):
+    monkeypatch.setattr(music, "_client", FakeYTMusic)
+    monkeypatch.setattr(music, "SEARCH_LIMIT", 2)  # two songs found: there may be more
+
+    async def scenario():
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            search = app.track_list("search")
+            await pilot.press("slash", *"daft punk", "enter")
+            await until(pilot, lambda: "Albums" in lines(search))
+            results = lines(search)
+            assert results[:4] == [
+                "Songs",
+                "Daft Punk — Digital Love  4:58",
+                "Solo  3:00",
+                "all songs  →",
+            ]
+            assert "all artists  →" not in results  # just one artist
+            search.highlighted = 3
+            await pilot.press("enter")
+            await until(pilot, lambda: lines(search)[0] == "Songs for «daft punk»  (← back)")
+            songs = ["Daft Punk — Digital Love  4:58", "Solo  3:00"]
+            assert lines(search)[1:] == ["2 found", "", *songs]
+            await pilot.press("left")
+            await until(pilot, lambda: lines(search) == results)
+            await pilot.press("q")
+
+    asyncio.run(scenario())

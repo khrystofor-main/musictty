@@ -50,11 +50,12 @@ the rest of an album or a playlist), then the radio's own picks. `enter` plays a
 all it adds nothing and the queue starts over.
 
 **Search** (`/`) suggests as you type, like YouTube Music: `↓` goes into the suggestions and
-`enter` searches the one under the cursor. It finds songs, albums, artists and playlists: a
-song starts a radio, an album or a playlist plays in order and then turns into a radio from
-its last track. `→` opens a playlist or an album (`enter` on a track plays from there) and
-an artist's page: their radio, top songs, albums, singles and similar artists, with the full
-lists one `→` further. `←` goes back.
+`enter` searches the one under the cursor. It finds songs, albums, artists and playlists,
+eight of each ("all songs →" and the like show more): a song starts a radio, an album or a
+playlist plays in order and then turns into a radio from its last track. `→` opens a
+playlist or an album (`enter` on a track plays from there) and an artist's page: their
+radio, top songs, albums, singles and similar artists, with the full lists one `→` further.
+`←` goes back.
 
 **Playlists** (tab `8`) are your own, kept on your machine: `+ new playlist` makes one, `S`
 on any track adds it, `enter` plays one (then a radio goes on), `→` opens it to reorder
