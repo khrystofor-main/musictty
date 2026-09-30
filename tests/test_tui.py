@@ -581,7 +581,16 @@ def test_explore(monkeypatch):
 
     monkeypatch.setattr(control, "start", fake_start)
     explore = [
-        "Explore",
+        "Home",
+        "",
+        "Quick picks",
+        "yetep — Gravity",
+        "▶ Chill mix",
+        "",
+        "Your favorites",
+        "Chill Satellite  374 subscribers",
+        "Dragon  Album · 2019",
+        "r/EDM top  redditEDM · 161 songs",
         "",
         "New releases",
         "Dept — Hangang  Album",
@@ -609,8 +618,9 @@ def test_explore(monkeypatch):
             view = app.track_list("explore")
             await pilot.press("9")
             await until(pilot, lambda: lines(view) == explore)
-            assert view.highlighted == 3  # the first new release
-            await pilot.press("down", "enter")  # a trending song: a radio from it
+            assert view.highlighted == 3  # the first quick pick
+            view.highlighted = explore.index("BTS — Permission to Dance")
+            await pilot.press("enter")  # a trending song: a radio from it
             await until(pilot, lambda: len(started) == 1)
 
             await pilot.press("9")
@@ -621,8 +631,12 @@ def test_explore(monkeypatch):
             await until(pilot, lambda: len(started) == 2)
             await pilot.press("9", "left")
             await until(pilot, lambda: lines(view) == explore)
+            view.highlighted = explore.index("▶ Chill mix")
+            await pilot.press("enter")  # a radio of Home
+            await until(pilot, lambda: len(started) == 3)
             await pilot.press("q")
 
     asyncio.run(scenario())
     assert started[0] == (B, {})
     assert started[1] == (S, {"queue": FRENCH, "then_radio": True, "source": "playlist"})
+    assert started[2][1]["source"] == "radio"
