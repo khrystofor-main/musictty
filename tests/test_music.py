@@ -6,6 +6,7 @@ from musictty.models import Track
 from musictty.music import (
     ALBUMS,
     ARTISTS,
+    MOODS,
     MORE_ALBUMS,
     MORE_SONGS,
     PLAYLISTS,
@@ -165,8 +166,107 @@ class FakeYTMusic:
              "year": "1997", "thumbnails": []},
         ]  # fmt: skip
 
+    def get_home(self, limit=3):
+        assert limit == 6
+        return [
+            {
+                "title": "Quick picks",
+                "contents": [
+                    {"title": "Gravity", "videoId": A, "thumbnails": [],
+                     "artists": [{"name": "yetep", "id": "UCyetep"}],
+                     "album": {"name": "Gravity", "id": "MPREb_gravity"}},
+                    # a watch playlist: a radio
+                    {"title": "Chill mix", "playlistId": "RDCLAKmix", "thumbnails": []},
+                ],
+            },
+            {
+                "title": "Your favorites",
+                "contents": [
+                    {"title": "Chill Satellite", "browseId": "UCsat", "subscribers": "374",
+                     "thumbnails": []},
+                    {"title": "Dragon", "year": "2019", "browseId": "MPREb_dragon",
+                     "thumbnails": []},
+                    {"title": "r/EDM top", "playlistId": "PLedm", "thumbnails": [],
+                     "description": "redditEDM • 161 songs", "count": "161",
+                     "author": [{"name": "redditEDM", "id": "UCedm"}]},
+                    {"title": "A podcast", "browseId": "MPSPPLpod"},  # not music: left out
+                ],
+            },
+            {"title": "Empty", "contents": []},
+        ]  # fmt: skip
+
+    def get_explore(self):
+        return {
+            "new_releases": [
+                {
+                    "title": "Hangang",
+                    "type": "Album",
+                    "browseId": "MPREb_new",
+                    "isExplicit": False,
+                    "artists": [{"id": "UCdept", "name": "Dept"}],
+                    "audioPlaylistId": "OLAK5uy_new",
+                    "thumbnails": [],
+                },
+            ],  # fmt: skip
+            # top_songs only comes with a premium account
+            "moods_and_genres": [{"title": "Chill", "params": "chill-params"}],
+            "trending": {
+                "playlist": "VLOLAKtrending",
+                "items": [
+                    {
+                        "title": "Permission to Dance",
+                        "videoId": B,
+                        "playlistId": "OLAKtrending",
+                        "videoType": "MUSIC_VIDEO_TYPE_OMV",
+                        "views": "108M",
+                        "thumbnails": [],
+                        "artists": [{"name": "BTS", "id": "UCbts"}],
+                        "isExplicit": False,
+                    },
+                ],  # fmt: skip
+            },
+            "new_videos": [],
+        }
+
+    def get_charts(self, country="ZZ"):
+        assert country == "ZZ"
+        return {
+            "countries": {"selected": {"text": "Global"}, "options": ["DE", "ZZ"]},
+            "videos": [
+                {"title": "Top 100 Music Videos Global", "playlistId": "PLglobal", "thumbnails": []}
+            ],
+            "artists": [
+                # without an account: unranked
+                {
+                    "title": "Bad Bunny",
+                    "browseId": "UCbb",
+                    "subscribers": "50M",
+                    "thumbnails": [],
+                    "rank": None,
+                    "trend": None,
+                },
+            ],  # fmt: skip
+        }
+
+    def get_mood_categories(self):
+        return {
+            "Moods & moments": [{"params": "chill-params", "title": "Chill"}],
+            "Genres": [{"params": "dance-params", "title": "Dance & Electronic"}, {"title": "?"}],
+        }
+
+    def get_mood_playlists(self, params):
+        assert params == "chill-params"
+        # get_library_playlists' format
+        return [
+            {"title": "Chill Hits", "playlistId": "RDCLAKchill", "thumbnails": [],
+             "description": "Playlist • YouTube Music", "owned": False},
+            {"title": "Lo-fi", "playlistId": "PLfrench", "thumbnails": [], "owned": False,
+             "description": "Someone • 50 songs", "count": "50",
+             "author": [{"name": "Someone", "id": "UCsomeone"}]},
+        ]  # fmt: skip
+
     def get_watch_playlist(self, videoId=None, playlistId=None, limit=25, radio=False):
-        assert playlistId == "RDEMdp"
+        assert playlistId in ("RDEMdp", "RDCLAKmix")  # an artist's radio, a radio of Home
         tracks = [
             {"videoId": B, "title": "Around the World", "length": "7:09",
              "artists": [{"name": "Daft Punk", "id": "UCdp"}]},
@@ -237,7 +337,7 @@ def test_artist_page():
             "Top songs",
             [
                 Result(SONGS, B, "Daft Punk — Around the World", "7:09"),
-                Result(MORE_SONGS, "VLPLdp", "all songs"),
+                Result(MORE_SONGS, "VLPLdp", "all songs", params="Daft Punk: songs"),
             ],
         ),
         (
@@ -264,7 +364,7 @@ def test_artist_page_without_songs_or_radio(monkeypatch):
 
 
 def test_all_of_an_artists_songs_and_albums():
-    songs = music.artist_songs("VLPLdp", "Daft Punk")
+    songs = music.songs_page("VLPLdp", "Daft Punk: songs")
     assert songs.title == "Daft Punk: songs" and songs.plays_as
     assert [r.id for r in songs.sections[0].results] == [B, S]
     albums = music.artist_albums("UCdp", "albums-params", "Daft Punk", "albums")
@@ -286,6 +386,63 @@ def test_playlist():
             Track(C, "Stardust — Music Sounds Better with You"),
         ],
     )
+
+
+def test_explore():
+    page = music.explore()
+    assert page.title == "Home"
+    assert [(s.title, s.results) for s in page.sections] == [
+        # Home's rows first, as they come
+        (
+            "Quick picks",
+            [
+                Result(SONGS, A, "yetep — Gravity"),
+                Result(RADIO, "RDCLAKmix", "Chill mix", params="radio"),
+            ],
+        ),
+        (
+            "Your favorites",
+            [
+                Result(ARTISTS, "UCsat", "Chill Satellite", "374 subscribers"),
+                Result(ALBUMS, "MPREb_dragon", "Dragon", "Album · 2019"),
+                Result(PLAYLISTS, "VLPLedm", "r/EDM top", "redditEDM · 161 songs"),
+            ],
+        ),
+        ("New releases", [Result(ALBUMS, "MPREb_new", "Dept — Hangang", "Album")]),
+        (
+            "Trending",
+            [
+                Result(SONGS, B, "BTS — Permission to Dance"),
+                Result(MORE_SONGS, "VLOLAKtrending", "all trending", params="Trending"),
+            ],
+        ),
+        ("Charts", [Result(PLAYLISTS, "VLPLglobal", "Top 100 Music Videos Global")]),
+        ("Top artists", [Result(ARTISTS, "UCbb", "Bad Bunny", "50M subscribers")]),
+        ("Moods & moments", [Result(MOODS, "chill-params", "Chill")]),
+        ("Genres", [Result(MOODS, "dance-params", "Dance & Electronic")]),
+    ]
+
+
+def test_explore_keeps_what_loaded(monkeypatch):
+    class Half(FakeYTMusic):
+        def get_charts(self, country="ZZ"):
+            raise ConnectionError
+
+        def get_explore(self):
+            raise ConnectionError
+
+    monkeypatch.setattr(music, "_client", Half)
+    titles = [s.title for s in music.explore().sections]
+    assert titles == ["Quick picks", "Your favorites", "Moods & moments", "Genres"]
+
+
+def test_mood_playlists():
+    page = music.mood_playlists("chill-params", "Chill")
+    assert (page.title, page.detail) == ("Chill", "2 playlists")
+    assert page.sections[0].results == [
+        Result(PLAYLISTS, "VLRDCLAKchill", "Chill Hits", "Playlist • YouTube Music"),
+        Result(PLAYLISTS, "VLPLfrench", "Lo-fi", "Someone · 50 songs"),
+    ]
 
 
 def test_artist_radio():

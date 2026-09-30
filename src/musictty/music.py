@@ -8,6 +8,7 @@ lazily, like yt_dlp.
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,11 +19,16 @@ from .radio import PLAYLIST as PLAYLIST_SOURCE
 from .youtube import display_title, is_video_id
 
 PLAYLIST_LIMIT = 200  # tracks read from a playlist
+HOME_ROWS = 6  # rows of Home, before Explore's
+RADIO_LABEL = "radio"  # the source a radio of Home plays as
+# the country of the charts (ISO 3166-1 alpha-2); ZZ is the whole world
+CHARTS_COUNTRY = os.environ.get("MUSICTTY_CHARTS", "ZZ").upper()
 
 SONGS, ALBUMS, ARTISTS, PLAYLISTS = "song", "album", "artist", "playlist"
-RADIO = "radio"  # an artist's radio: id is its playlist id
-MORE_SONGS = "more songs"  # all of an artist's songs: id is the playlist's browse id
+RADIO = "radio"  # an artist's radio, a mix of Home: id is its playlist id, params its label
+MORE_SONGS = "more songs"  # a longer list of songs: id is its playlist's browse id
 MORE_ALBUMS = "more albums"  # all albums or singles: id is the channel id, with params
+MOODS = "mood"  # a mood or a genre of Explore: id is its params
 
 
 @dataclass(frozen=True)
@@ -32,7 +38,8 @@ class Result:
     id: str  # video id, album / playlist browse id or artist channel id
     title: str  # "Artist — Title" for songs and albums, the name for artists
     detail: str = ""  # duration of a song, "Album · 1995" of an album
-    params: str = ""  # what ytmusicapi needs besides the id (MORE_ALBUMS)
+    # what ytmusicapi needs besides the id (MORE_ALBUMS); the title of MORE_SONGS' page
+    params: str = ""
 
 
 @dataclass
@@ -112,9 +119,13 @@ def _playlist(item: dict) -> Result | None:
     browse_id = item.get("browseId") or (item.get("playlistId") and "VL" + item["playlistId"])
     if not browse_id or not item.get("title"):
         return None
-    count = item.get("itemCount")
-    detail = [item.get("author"), count is not None and f"{count} songs"]
-    return Result(PLAYLISTS, browse_id, item["title"], " · ".join(str(x) for x in detail if x))
+    # search: author and itemCount; Explore's moods: author as a list, count; charts: nothing
+    author = item.get("author")
+    author = _names(author) if isinstance(author, list) else author
+    count = item.get("itemCount", item.get("count"))
+    detail = " · ".join(str(x) for x in (author, count is not None and f"{count} songs") if x)
+    detail = detail or item.get("description") or ""
+    return Result(PLAYLISTS, browse_id, item["title"], detail)
 
 
 def _parsed(items: Any, parse: Any, *args: Any) -> list[Result]:
@@ -203,7 +214,7 @@ def artist(browse_id: str) -> Page:
     songs = data.get("songs") or {}
     results = _parsed(songs.get("results"), _song, name)
     if results and songs.get("browseId"):
-        results.append(Result(MORE_SONGS, songs["browseId"], "all songs"))
+        results.append(Result(MORE_SONGS, songs["browseId"], "all songs", params=f"{name}: songs"))
     page.sections.append(Section("Top songs", results))
     for key, title in (("albums", "Albums"), ("singles", "Singles")):
         shelf = data.get(key) or {}
@@ -237,17 +248,82 @@ def playlist(browse_id: str) -> tuple[str, list[Track]]:
     return page.title, tracks(page.sections[0].results)
 
 
-def artist_songs(browse_id: str, name: str) -> Page:
-    """All of an artist's songs (MORE_SONGS): a playlist."""
+def songs_page(browse_id: str, title: str) -> Page:
+    """A longer list of songs (MORE_SONGS): all of an artist's, all of the trending ones."""
     data = _client().get_playlist(browse_id, limit=PLAYLIST_LIMIT)
-    songs = _parsed(data.get("tracks"), _song, name)
-    return Page(f"{name}: songs", f"{len(songs)} songs", [Section("", songs)], plays_as="songs")
+    songs = _parsed(data.get("tracks"), _song)
+    return Page(title, f"{len(songs)} songs", [Section("", songs)], plays_as="songs")
 
 
 def artist_albums(channel_id: str, params: str, name: str, title: str) -> Page:
     """All of an artist's albums or singles (MORE_ALBUMS)."""
     albums = _parsed(_client().get_artist_albums(channel_id, params, limit=None), _album, name)
     return Page(f"{name}: {title}", f"{len(albums)} releases", [Section("", albums)])
+
+
+def _home_item(item: dict) -> Result | None:
+    """A row of Home mixes songs, albums, artists, playlists and radios."""
+    browse_id = item.get("browseId") or ""
+    if item.get("videoId"):
+        return _song(item)
+    if browse_id.startswith("MPRE"):
+        return _album(item)
+    if browse_id.startswith("UC"):
+        return _artist(item)
+    if item.get("playlistId") and "owned" not in item and "author" not in item:
+        # a watch playlist: a radio of YouTube Music's, played like an artist's
+        return Result(RADIO, item["playlistId"], item.get("title") or "radio", params=RADIO_LABEL)
+    return _playlist(item) if item.get("playlistId") else None
+
+
+def explore() -> Page:
+    """YouTube Music's Home and Explore without an account: Home's rows (quick picks and the
+    like), new releases, trending songs, the charts, moods and genres. Four requests at once;
+    a part that fails is left out."""
+
+    def get(method: str, *args: Any) -> Any:
+        try:
+            return getattr(_client(), method)(*args) or {}
+        except Exception:
+            return {}
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        home_f = pool.submit(get, "get_home", HOME_ROWS)
+        explore_f = pool.submit(get, "get_explore")
+        charts_f = pool.submit(get, "get_charts", CHARTS_COUNTRY)
+        moods_f = pool.submit(get, "get_mood_categories")
+        home, data = home_f.result(), explore_f.result()
+        charts, moods = charts_f.result(), moods_f.result()
+    page = Page("Home")
+    for row in home if isinstance(home, list) else []:
+        if isinstance(row, dict) and row.get("title"):
+            page.sections.append(Section(row["title"], _parsed(row.get("contents"), _home_item)))
+    page.sections.append(Section("New releases", _parsed(data.get("new_releases"), _album)))
+    for key, title in (("top_songs", "Top songs"), ("trending", "Trending")):
+        shelf = data.get(key) or {}
+        results = _parsed(shelf.get("items"), _song)
+        if results and shelf.get("playlist"):
+            more = Result(MORE_SONGS, shelf["playlist"], f"all {title.lower()}", params=title)
+            results.append(more)
+        page.sections.append(Section(title, results))
+    chart_playlists = [*(charts.get("videos") or []), *(charts.get("genres") or [])]
+    page.sections.append(Section("Charts", _parsed(chart_playlists, _playlist)))
+    page.sections.append(Section("Top artists", _parsed(charts.get("artists"), _artist)))
+    for title, categories in moods.items() if isinstance(moods, dict) else []:
+        results = [
+            Result(MOODS, c["params"], c["title"])
+            for c in categories or []
+            if isinstance(c, dict) and c.get("params") and c.get("title")
+        ]
+        page.sections.append(Section(title, results))
+    page.sections = [s for s in page.sections if s.results]
+    return page
+
+
+def mood_playlists(params: str, title: str) -> Page:
+    """The playlists of a mood or a genre."""
+    playlists = _parsed(_client().get_mood_playlists(params), _playlist)
+    return Page(title, f"{len(playlists)} playlists", [Section("", playlists)])
 
 
 def artist_radio(playlist_id: str) -> list[Track]:

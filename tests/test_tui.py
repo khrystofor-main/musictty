@@ -564,3 +564,79 @@ def test_playlists(monkeypatch):
     asyncio.run(scenario())
     queue = [Track(S, "s")]
     assert started == [(S, {"queue": queue, "then_radio": True, "source": "playlist"})] * 2
+
+
+FRENCH = [
+    Track(S, "Daft Punk — One More Time"),
+    Track(C, "Stardust — Music Sounds Better with You"),
+]
+
+
+def test_explore(monkeypatch):
+    monkeypatch.setattr(music, "_client", FakeYTMusic)
+    started = []
+
+    async def fake_start(seed=None, **kwargs):
+        started.append((seed, kwargs))
+
+    monkeypatch.setattr(control, "start", fake_start)
+    explore = [
+        "Home",
+        "",
+        "Quick picks",
+        "yetep — Gravity",
+        "▶ Chill mix",
+        "",
+        "Your favorites",
+        "Chill Satellite  374 subscribers",
+        "Dragon  Album · 2019",
+        "r/EDM top  redditEDM · 161 songs",
+        "",
+        "New releases",
+        "Dept — Hangang  Album",
+        "",
+        "Trending",
+        "BTS — Permission to Dance",
+        "all trending  →",
+        "",
+        "Charts",
+        "Top 100 Music Videos Global",
+        "",
+        "Top artists",
+        "Bad Bunny  50M subscribers",
+        "",
+        "Moods & moments",
+        "Chill",
+        "",
+        "Genres",
+        "Dance & Electronic",
+    ]
+
+    async def scenario():
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            view = app.track_list("explore")
+            await pilot.press("9")
+            await until(pilot, lambda: lines(view) == explore)
+            assert view.highlighted == 3  # the first quick pick
+            view.highlighted = explore.index("BTS — Permission to Dance")
+            await pilot.press("enter")  # a trending song: a radio from it
+            await until(pilot, lambda: len(started) == 1)
+
+            await pilot.press("9")
+            view.highlighted = explore.index("Chill")
+            await pilot.press("right")  # a mood: its playlists
+            await until(pilot, lambda: lines(view)[:2] == ["Chill  (← back)", "2 playlists"])
+            await pilot.press("down", "enter")  # the second playlist plays
+            await until(pilot, lambda: len(started) == 2)
+            await pilot.press("9", "left")
+            await until(pilot, lambda: lines(view) == explore)
+            view.highlighted = explore.index("▶ Chill mix")
+            await pilot.press("enter")  # a radio of Home
+            await until(pilot, lambda: len(started) == 3)
+            await pilot.press("q")
+
+    asyncio.run(scenario())
+    assert started[0] == (B, {})
+    assert started[1] == (S, {"queue": FRENCH, "then_radio": True, "source": "playlist"})
+    assert started[2][1]["source"] == "radio"
