@@ -469,9 +469,23 @@ def test_artist_and_album_pages(monkeypatch):
             await until(pilot, lambda: lines(search) == album_page)
             await pilot.press("left")
             await until(pilot, lambda: lines(search) == results)
+
+            # a YouTube Music playlist: enter plays it, → opens it
+            search.highlighted = results.index("French touch  Someone · 174 songs")
+            await pilot.press("enter")
+            await until(pilot, lambda: len(started) == 4)
+            await pilot.press("5", "right")
+            await until(pilot, lambda: lines(search)[:2] == ["French touch  (← back)", french])
+            await pilot.press("down", "enter")  # from its second track
+            await until(pilot, lambda: len(started) == 5)
             await pilot.press("q")
 
+    french = "Someone · 174 songs · 6+ hours"
     asyncio.run(scenario())
+    stardust = Track(C, "Stardust — Music Sounds Better with You")
+    playlist = [Track(S, "Daft Punk — One More Time"), stardust]
+    assert started[3] == (S, {"queue": playlist, "then_radio": True, "source": "playlist"})
+    assert started[4] == (C, {"queue": [stardust], "then_radio": True, "source": "playlist"})
     one_more, face = (
         Track(S, "Daft Punk — One More Time"),
         Track(B, "Daft Punk, Todd Edwards — Face to Face"),
@@ -480,3 +494,71 @@ def test_artist_and_album_pages(monkeypatch):
     radio = [Track(B, "Daft Punk — Around the World"), Track(C, "Justice — D.A.N.C.E.")]
     assert started[1] == (B, {"queue": radio, "then_radio": True, "source": "artist radio"})
     assert started[2] == (S, {"queue": [one_more], "then_radio": True, "source": "songs"})
+
+
+def test_playlists(monkeypatch):
+    store = Store()
+    for t in (Track(S, "s"), Track(A, "a")):
+        store.add_play(t)
+    store.create_playlist("Mix")
+    store.add_to_playlist("Mix", [Track(B, "b")])
+    started = []
+
+    async def fake_start(seed=None, **kwargs):
+        started.append((seed, kwargs))
+
+    monkeypatch.setattr(control, "start", fake_start)
+
+    def names():
+        return {p.name: [t.id for t in p.tracks] for p in Store().playlists()}
+
+    async def scenario():
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            view = app.track_list("playlists")
+            await pilot.press("8")
+            assert lines(view) == ["+ new playlist", "Mix  1 song"]
+            await pilot.press("enter", *"Evening", "enter")  # a new one, named in a dialog
+            await until(
+                pilot, lambda: lines(view) == ["+ new playlist", "Mix  1 song", "Evening  0 songs"]
+            )
+
+            # S on a track: pick the playlist, or make a new one for it
+            await pilot.press("3", "S")
+            await pilot.press("down", "enter")
+            await until(pilot, lambda: names()["Evening"] == [A])
+            await pilot.press("3", "down", "S", "down", "enter")
+            await until(pilot, lambda: names()["Evening"] == [A, S])
+            await pilot.press("3", "S", "down", "down", "enter", *"Road", "enter")
+            await until(pilot, lambda: names().get("Road") == [S])
+            await pilot.press("3", "S", "escape")  # changed my mind
+            await pilot.press("3", "S", "enter")
+            await until(pilot, lambda: names()["Mix"] == [B, S])
+            await pilot.press("3", "S", "enter")  # already there: not twice
+            assert names()["Mix"] == [B, S]
+
+            await pilot.press("8", "down", "down", "right")  # open Evening
+            await until(pilot, lambda: lines(view) == ["Evening  (← back)", "a", "s"])
+            assert view.highlighted == 1
+            await pilot.press("shift+down")
+            await until(pilot, lambda: lines(view) == ["Evening  (← back)", "s", "a"])
+            assert view.highlighted == 2  # the cursor goes with the track
+            await pilot.press("delete")
+            await until(pilot, lambda: lines(view) == ["Evening  (← back)", "s"])
+            await pilot.press("enter")  # plays from here, then a radio
+            await until(pilot, lambda: len(started) == 1)
+
+            await pilot.press("8", "left")
+            await until(pilot, lambda: lines(view)[0] == "+ new playlist")
+            view.highlighted = 1
+            await pilot.press("delete", "n")  # asked first: no
+            assert "Mix" in names()
+            await pilot.press("delete", "y")
+            await until(pilot, lambda: "Mix" not in names())
+            await pilot.press("enter")  # Evening, from the start
+            await until(pilot, lambda: len(started) == 2)
+            await pilot.press("q")
+
+    asyncio.run(scenario())
+    queue = [Track(S, "s")]
+    assert started == [(S, {"queue": queue, "then_radio": True, "source": "playlist"})] * 2

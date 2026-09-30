@@ -3,7 +3,16 @@ from fakes import tid
 
 from musictty import music
 from musictty.models import Track
-from musictty.music import ALBUMS, ARTISTS, MORE_ALBUMS, MORE_SONGS, RADIO, SONGS, Result
+from musictty.music import (
+    ALBUMS,
+    ARTISTS,
+    MORE_ALBUMS,
+    MORE_SONGS,
+    PLAYLISTS,
+    RADIO,
+    SONGS,
+    Result,
+)
 
 S, A, B, C = (tid(n) for n in range(4))
 
@@ -43,6 +52,19 @@ class FakeYTMusic:
         "artists": [
             {"resultType": "artist", "artist": "Daft Punk", "browseId": "UCdp"},
             {"resultType": "artist", "artist": "Nameless"},
+        ],
+        "playlists": [
+            {
+                "category": "Community playlists",
+                "resultType": "playlist",
+                "browseId": "VLPLfrench",
+                "title": "French touch",
+                "author": "Someone",
+                "itemCount": 174,
+            },
+            # itemCount can be None for community playlists
+            {"resultType": "playlist", "browseId": "VLPLx", "title": "No count", "itemCount": None},
+            {"resultType": "playlist", "title": "no browse id"},
         ],
     }
     calls: list = []
@@ -107,6 +129,21 @@ class FakeYTMusic:
         }
 
     def get_playlist(self, playlist_id, limit=100, related=False, suggestions_limit=0):
+        if playlist_id == "VLPLfrench":
+            return {
+                "id": "PLfrench",
+                "privacy": "PUBLIC",
+                "title": "French touch",
+                "author": {"name": "Someone", "id": "UCsomeone"},
+                "year": "2020",
+                "duration": "6+ hours",
+                "trackCount": 174,
+                "tracks": [
+                    song(S, "One More Time", "Daft Punk", duration="5:20"),
+                    song(A, "Gone", isAvailable=False),
+                    song(C, "Music Sounds Better with You", "Stardust", duration="4:21"),
+                ],
+            }
         assert playlist_id == "VLPLdp"
         return {
             "id": "PLdp",
@@ -156,9 +193,14 @@ def test_search():
         Result(ALBUMS, "MPREb_2", "Single", "Single"),
     ]
     assert found.artists == [Result(ARTISTS, "UCdp", "Daft Punk")]
+    assert found.playlists == [
+        Result(PLAYLISTS, "VLPLfrench", "French touch", "Someone · 174 songs"),
+        Result(PLAYLISTS, "VLPLx", "No count"),
+    ]
     assert sorted(FakeYTMusic.calls) == [
         ("daft punk", "albums", 5),
         ("daft punk", "artists", 5),
+        ("daft punk", "playlists", 5),
         ("daft punk", "songs", 5),
     ]
 
@@ -231,6 +273,19 @@ def test_all_of_an_artists_songs_and_albums():
         Result(ALBUMS, "MPREb_1", "Daft Punk — Discovery", "Album · 2001"),
         Result(ALBUMS, "MPREb_2", "Daft Punk — Homework", "Album · 1997"),
     ]
+
+
+def test_playlist():
+    page = music.playlist_page("VLPLfrench")
+    assert (page.title, page.detail) == ("French touch", "Someone · 174 songs · 6+ hours")
+    assert page.plays_as == "playlist"
+    assert music.playlist("VLPLfrench") == (
+        "French touch",
+        [
+            Track(S, "Daft Punk — One More Time"),
+            Track(C, "Stardust — Music Sounds Better with You"),
+        ],
+    )
 
 
 def test_artist_radio():

@@ -26,6 +26,7 @@ from .radio import (
     PID_PROPERTY,
     PLAY_MESSAGE,
     PLAY_NEXT,
+    PLAYLIST,
     RADIO_MIX,
     REMOVE_MESSAGE,
     SHUFFLE_MESSAGE,
@@ -37,6 +38,7 @@ from .store import (
     SEEDS,
     SETTINGS,
     AlreadyImported,
+    PlaylistError,
     Store,
     find_v0_dir,
     import_v0,
@@ -71,6 +73,15 @@ musictty — endless music radio in the terminal
   musictty liked remove <n>    remove track n from liked
   musictty history next <n>    play track n next (liked next <n> too)
   musictty history queue <n>   add track n to the queue (liked queue <n> too)
+
+  musictty playlists           your playlists
+  musictty playlists <n>       the tracks of playlist n
+  musictty playlists play <n>  play playlist n, then a radio
+  musictty playlists add <n>   add the current track to playlist n
+  musictty playlists new <name>
+                               make a playlist
+  musictty playlists delete <n>
+                               delete playlist n
 
   musictty like                like the current track
   musictty unlike              remove the current track from liked
@@ -112,6 +123,7 @@ SIMPLE = {
     "liked",
     "upnext",
     "shuffle",
+    "playlists",
 }
 QUEUE_ACTIONS = {PLAY_NEXT, ADD_TO_QUEUE}
 LIST_ACTIONS = {
@@ -119,6 +131,7 @@ LIST_ACTIONS = {
     "history": QUEUE_ACTIONS,
     "liked": {"play", "repeat", "remove", *QUEUE_ACTIONS},
     "upnext": {"remove"},
+    "playlists": {"play", "add", "delete"},
 }
 LINK = re.compile(r"https?://([\w-]+\.)*(youtube\.com|youtu\.be)/", re.ASCII)
 NUMBER = re.compile(r"[1-9][0-9]{0,3}")
@@ -170,6 +183,8 @@ def parse(argv: list[str]) -> Call:
         return Call("repeat", text=rest[1], action="all")
     if head == "seek" and len(rest) == 1 and SECONDS.fullmatch(rest[0]):
         return Call("seek", number=int(rest[0]))
+    if head == "playlists" and rest[0] == "new" and len(rest) > 1:
+        return Call("playlists", text=" ".join(rest[1:]), action="new")
     if head == "import-v0" and len(rest) == 1:
         return Call(head, text=rest[0])
     if head in LIST_ACTIONS:
@@ -348,6 +363,36 @@ def cmd_upnext(call: Call) -> None:
     asyncio.run(control.message(name, str(item["entry"])))
 
 
+def cmd_playlists(call: Call) -> None:
+    store = Store()
+    if call.action == "new":
+        assert call.text
+        print(f"made {store.create_playlist(call.text).name}")
+        return
+    playlists = store.playlists()
+    if call.number is None:
+        print_numbered([f"{p.name} ({len(p.tracks)})" for p in playlists])
+        return
+    playlist = pick(playlists, call.number)
+    if call.action is None:
+        print_numbered([t.title for t in playlist.tracks])
+    elif call.action == "delete":
+        store.delete_playlist(playlist.name)
+        print(f"deleted {playlist.name}")
+    elif call.action == "add":
+        cur = on_player(control.current_track)
+        if not cur or not cur.get("id"):
+            raise Failure("nothing is playing")
+        track = Track(cur["id"], cur.get("title") or cur["id"])
+        added = store.add_to_playlist(playlist.name, [track])
+        print(f"{track.title} → {playlist.name}" if added else f"already in {playlist.name}")
+    elif not playlist.tracks:
+        raise Failure(f"{playlist.name} is empty")
+    else:
+        tracks = playlist.tracks
+        asyncio.run(control.start(tracks[0].id, queue=tracks, then_radio=True, source=PLAYLIST))
+
+
 def cmd_shuffle(call: Call) -> None:
     asyncio.run(control.message(SHUFFLE_MESSAGE))
 
@@ -446,6 +491,7 @@ COMMANDS: dict[str, Callable[[Call], int | None]] = {
     "liked": cmd_liked,
     "upnext": cmd_upnext,
     "shuffle": cmd_shuffle,
+    "playlists": cmd_playlists,
     "repeat": cmd_repeat,
     "seek": cmd_seek,
     "vol+": cmd_volume,
@@ -470,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:
         return COMMANDS[call.name](call) or 0
     except Invalid:
         print("invalid input")
-    except Failure as e:
+    except (Failure, PlaylistError) as e:
         print(e)
     except MpvError:
         pass  # the radio is off (or went away): quietly, like v0

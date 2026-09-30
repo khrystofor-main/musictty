@@ -28,16 +28,17 @@ songs, and never stops until you tell it to. Windows, macOS and Linux.
 ## The player
 
 `musictty` on its own opens the player: what's playing, the current radio, recent radios,
-history, liked tracks, search, lyrics and what's up next. The bar at the bottom shows the keys,
+history, liked tracks, search, lyrics, what's up next and your playlists. The bar at the bottom shows the keys,
 the second line those of the list you're in.
 
 Keys: `space` pause, `n`/`p` next and previous, `+`/`-` volume, `,`/`.` seek 10 seconds
 back and forward, `l` like, `r` repeat the track, `R` repeat the whole queue, `x` shuffle
-what's up next, `s` stop, `/` search, `a` AI radio, `1`–`7` tabs, `q` quit (the music keeps
+what's up next, `s` stop, `/` search, `a` AI radio, `1`–`8` tabs, `q` quit (the music keeps
 playing).
 
 In the lists, `enter` starts a radio from a track, `e` adds it to the queue and `E` plays it
-next (an album from the search goes in whole). `←` jumps back in the current radio; in
+next, `S` saves it to one of your playlists (an album or a playlist from the search goes in
+whole). `←` jumps back in the current radio; in
 liked, `→` plays them in a loop from that track and `←` does the same with it on repeat,
 `delete` removes it.
 
@@ -47,11 +48,16 @@ the rest of an album or a playlist), then the radio's own picks. `enter` plays a
 `delete` removes it. The radio keeps adding picks once the queue has played out; with repeat
 all it adds nothing and the queue starts over.
 
-**Search** finds songs, albums and artists on YouTube Music: a song starts a radio, an album
-plays in order and then turns into a radio from its last track. `→` opens an album's page
+**Search** finds songs, albums, artists and playlists on YouTube Music: a song starts a radio,
+an album or a playlist plays in order and then turns into a radio from its last track. `→`
+opens a playlist (`enter` plays it from that track), an album's page
 (its tracks: `enter` plays the album from that one) and an artist's page: their radio, top
 songs, albums, singles and similar artists, with the full lists one `→` further. `←` goes
 back.
+
+**Playlists** (tab `8`) are your own, kept on your machine: `+ new playlist` makes one, `S`
+on any track adds it, `enter` plays one (then a radio goes on), `→` opens it to reorder
+(`shift+↑`/`shift+↓`) or remove tracks, `delete` on a playlist deletes it (after asking).
 
 **Lyrics** (tab `6`) follow the song line by line when YouTube Music has them timed, and
 show as plain text otherwise.
@@ -80,6 +86,7 @@ musictty history              # recently played tracks; `musictty history 3` pla
 musictty history queue 3      # add it to the queue instead (`history next 3`: play it next)
 musictty upnext               # what's coming up; `musictty upnext remove 2` takes one out
 musictty liked play 2         # liked tracks in a loop, from the second one down
+musictty playlists            # your playlists; `playlists play 1`, `playlists add 1`
 musictty seek +30 | shuffle | repeat all on
 musictty next | prev | pause | play | stop | like | mem
 ```
@@ -114,7 +121,7 @@ still use it).
 - [x] Artist and album pages
 - [x] Lyrics, synced with the song
 - [x] Queue: up next, play next, add to queue, shuffle, repeat all, seek
-- [ ] Playlists in search
+- [x] Playlists: YouTube Music's in search, your own in the player
 - [x] AI radio: describe a mood in plain words, and a language model picks the songs
 - [ ] Album art in the terminal
 
