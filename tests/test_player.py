@@ -12,7 +12,7 @@ from fakes import FakeSource, tid
 
 from musictty import cli, paths, player, youtube
 from musictty.models import Track
-from musictty.radio import LIST_PROPERTY, LaunchSpec, Radio
+from musictty.radio import LIST_PROPERTY, UPNEXT_PROPERTY, LaunchSpec, Radio
 from musictty.store import Store
 from musictty.youtube import Stream
 
@@ -114,6 +114,29 @@ def test_radio_and_commands_on_a_real_player(files, capsys):
         assert await command("list", "back", "2") == (0, "")
         await until(lambda: played(S, A, S))
         assert await current() == S
+
+        # the queue: A once more, right after the current track
+        title = source.title
+
+        async def upnext(*ids):
+            return [it["id"] for it in await mpv.get(UPNEXT_PROPERTY) or []] == list(ids)
+
+        assert await command("history", "queue", "2") == (0, f"queued: {title(A)}\n")
+        await until(lambda: upnext(A, A, B))
+        assert await command("upnext") == (0, f" 1. {title(A)}\n 2. {title(A)}\n 3. {title(B)}\n")
+        assert await command("upnext", "remove", "1") == (0, "")
+        await until(lambda: upnext(A, B))
+        assert await command("repeat", "all", "on") == (0, "")
+        assert await mpv.get("loop-playlist") == "inf"
+        assert await command("now") == (0, f"{title(S)} · radio mix · repeat all\n")
+        assert await command("repeat", "all", "off") == (0, "")
+        assert await command("seek", "+10") == (0, "")
+        assert await mpv.get("time-pos") >= 10
+        assert await command("upnext", "2") == (0, "")  # B now, A still next
+        await until(lambda: played(B, S, A, S))
+        assert await current() == B
+        await until(lambda: upnext(A))
+        assert await command("shuffle") == (0, "")
 
         assert await command("stop") == (0, "")
         await asyncio.wait_for(task, 5)  # the radio ends with its player

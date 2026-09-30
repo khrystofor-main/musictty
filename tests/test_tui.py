@@ -12,12 +12,12 @@ from textual.widgets import Static, TabbedContent
 from musictty import control, music, paths, player
 from musictty.models import Track
 from musictty.music import ALBUMS, ARTISTS, SONGS, Result
-from musictty.radio import LIST_PROPERTY, LaunchSpec, Radio
+from musictty.radio import LIST_PROPERTY, UPNEXT_PROPERTY, LaunchSpec, Radio
 from musictty.store import Store
 from musictty.tui import MusicApp, TrackList
 from musictty.youtube import Stream
 
-S, A, B = (tid(n) for n in range(3))
+S, A, B, C = (tid(n) for n in range(4))
 SIZE = (100, 30)
 
 
@@ -75,6 +75,11 @@ def test_with_the_radio_off(monkeypatch):
             assert Store().liked() == [Track(S, "s"), Track(B, "b")]
             assert lines(app.track_list("liked")) == ["b", "s"]
 
+            await pilot.press("3", "e")  # queueing with the radio off just plays the track
+            await until(pilot, lambda: len(started) == 4)
+            await pilot.press("7")
+            assert lines(app.track_list("upnext")) == ["radio is off"]
+
             await pilot.press("q")
         return app
 
@@ -86,6 +91,7 @@ def test_with_the_radio_off(monkeypatch):
         (S, {}),
         (B, {"queue": queue_b, "repeat_one": False}),
         (A, {"queue": queue_a, "repeat_one": True}),
+        (A, {}),
     ]
 
 
@@ -289,3 +295,94 @@ def test_with_a_real_player(tmp_path, monkeypatch):
 
     asyncio.run(scenario())
     assert store.settings().volume == 75
+
+
+@pytest.mark.skipif(
+    not shutil.which("mpv") and not os.environ.get("MUSICTTY_REQUIRE_MPV"), reason="needs mpv"
+)
+def test_the_queue_with_a_real_player(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUSICTTY_MPV_ARGS", "--ao=null")
+    files = {}
+    for video_id in (S, A, B, C):
+        files[video_id] = str(tmp_path / f"{video_id}.wav")
+        with wave.open(files[video_id], "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(8000)
+            w.writeframes(b"\0\0" * 8000 * 60)
+
+    class LocalSource(FakeSource):
+        def stream(self, video_id):
+            return Stream(video_id, f"player {video_id}", files[video_id])
+
+    source = LocalSource({S: [S, A, B]})
+    spec = LaunchSpec(seed=S, stream=source.stream(S))
+    store = Store()
+    store.add_play(Track(C, "Earlier — C"))
+    title = source.title
+
+    async def scenario():
+        address = paths.ipc_address()
+        proc = player.launch_mpv(spec, address)
+        mpv = await player.wait_connect(address, lambda: proc.poll() is None)
+        radio = Radio(mpv, spec, store=store, source=source)
+        task = asyncio.create_task(radio.run())
+
+        def playing():
+            return (app.current() or {}).get("id")
+
+        upnext = None
+
+        def shows(*expected):
+            return lines(upnext) == list(expected)
+
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            upnext = app.track_list("upnext")
+            await until(pilot, lambda: playing() == S and len(app.props[UPNEXT_PROPERTY]) == 2)
+            await pilot.press("7")
+            await until(pilot, lambda: shows("from the radio mix", title(A), title(B)))
+            assert upnext.highlighted == 1  # the heading is skipped
+
+            await pilot.press("3", "down", "e")  # C from the history, after the current track
+            await pilot.press("7")
+            radio_mix = ("", "from the radio mix")
+            await until(pilot, lambda: shows("Earlier — C", *radio_mix, title(A), title(B)))
+            await pilot.press("3", "up", "E")  # S from the history, to play next
+            await pilot.press("7")
+            await until(
+                pilot, lambda: shows(title(S), "Earlier — C", *radio_mix, title(A), title(B))
+            )
+
+            await pilot.press("home", "shift+down")  # S goes down one
+            await until(
+                pilot, lambda: shows("Earlier — C", title(S), *radio_mix, title(A), title(B))
+            )
+            assert upnext.highlighted == 1  # and the cursor with it
+            await pilot.press("delete")
+            await until(pilot, lambda: shows("Earlier — C", *radio_mix, title(A), title(B)))
+            await pilot.press("down", "down", "E")  # B to the top
+            await until(pilot, lambda: shows(title(B), "Earlier — C", *radio_mix, title(A)))
+
+            await pilot.press("R")
+            await until(pilot, lambda: app.repeating_all() and " · repeat all · " in now(app))
+            # one loop: no heading for the radio's tracks
+            await until(pilot, lambda: shows(title(B), "Earlier — C", title(A)))
+            await pilot.press("R")
+            await until(pilot, lambda: not app.repeating_all())
+
+            await pilot.press("full_stop")
+            await until(pilot, lambda: (app.position or 0) >= 10)
+            await pilot.press("comma")
+            await until(pilot, lambda: (app.position or 0) < 10)
+
+            await pilot.press("down", "down", "enter")  # A now; the ones before it wait
+            await until(pilot, lambda: playing() == A)
+            await until(pilot, lambda: shows(title(B), "Earlier — C"))
+
+            await pilot.press("s")
+            await asyncio.wait_for(task, 5)
+            await pilot.press("q")
+        assert proc.wait(timeout=5) == 0
+
+    asyncio.run(scenario())

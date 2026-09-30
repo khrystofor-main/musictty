@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 from fakes import FakeMpv, FakeSource, parse_options, tid
@@ -9,6 +10,7 @@ from musictty.models import Track
 from musictty.radio import (
     LIST_PROPERTY,
     SOURCE_PROPERTY,
+    UPNEXT_PROPERTY,
     LaunchSpec,
     Radio,
     file_options,
@@ -16,7 +18,7 @@ from musictty.radio import (
 )
 from musictty.store import Store
 
-S, A, B, C, D, E = (tid(n) for n in range(6))
+S, A, B, C, D, E, F = (tid(n) for n in range(7))
 
 
 def run(coro):
@@ -284,3 +286,202 @@ def test_only_the_liked_playlist_loops():
     assert "--loop-playlist=inf" in player.mpv_command("mpv", "addr", liked)
     assert "--loop-playlist=inf" not in player.mpv_command("mpv", "addr", album)
     assert "--loop-playlist=inf" not in player.mpv_command("mpv", "addr", LaunchSpec(seed=S))
+
+
+# --- the queue ---
+
+
+def upnext(radio, mpv):
+    return [radio.video_id(e["filename"]) for e in mpv.entries[mpv.pos + 1 :]]
+
+
+async def message(radio, *args):
+    await radio.handle({"event": "client-message", "args": [str(a) for a in args]})
+    await radio.settle()
+
+
+def add(where, *ids):
+    return ("musictty-add", where, json.dumps([[i, f"added {i}"] for i in ids]))
+
+
+def test_play_next_and_add_to_queue(store):
+    source = FakeSource({S: [S, A, B]})
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        await load(mpv, radio, 0)
+        await message(radio, *add("queue", C, D))
+        # the queue goes ahead of the radio's own tracks, in order
+        assert upnext(radio, mpv) == [C, D, A, B]
+        await message(radio, *add("queue", E))
+        assert upnext(radio, mpv) == [C, D, E, A, B]  # after what was queued before
+        await message(radio, *add("next", F))
+        assert upnext(radio, mpv) == [F, C, D, E, A, B]
+        # the track that comes next is ready in advance, and it's named as it was added
+        assert mpv.entries[1]["filename"] == "https://stream/" + F
+        assert mpv.entries[1]["title"] == f"added {F}"
+        assert [(it["id"], it["queued"]) for it in mpv.props[UPNEXT_PROPERTY]] == [
+            (F, True),
+            (C, True),
+            (D, True),
+            (E, True),
+            (A, False),
+            (B, False),
+        ]
+        assert mpv.props[UPNEXT_PROPERTY][1]["title"] == f"added {C}"
+        # once it has played, a queued track is just history: new ones go right after the current
+        await load(mpv, radio, 1)
+        await message(radio, *add("queue", S))
+        assert upnext(radio, mpv) == [C, D, E, S, A, B]
+        return mpv, radio
+
+    run(scenario())
+
+
+def test_adding_to_a_finished_queue_plays_it(store):
+    source = FakeSource()
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        mpv.current_id = None  # it has run out
+        await message(radio, *add("queue", A))
+        return mpv, radio
+
+    mpv, radio = run(scenario())
+    assert radio.video_id(mpv.entries[mpv.pos]["filename"]) == A
+
+
+def test_remove_move_and_play_from_up_next(store):
+    source = FakeSource({S: [S, A, B, C, D]})
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        await load(mpv, radio, 0)
+
+        def entry(video_id):
+            return next(e["id"] for e in mpv.entries if radio.video_id(e["filename"]) == video_id)
+
+        await message(radio, "musictty-remove", entry(B))
+        assert upnext(radio, mpv) == [A, C, D]
+        await message(radio, "musictty-remove", entry(S))  # the playing track stays
+        assert upnext(radio, mpv) == [A, C, D]
+        await message(radio, "musictty-move", entry(D), "before", entry(A))
+        assert upnext(radio, mpv) == [D, A, C]
+        await message(radio, "musictty-move", entry(D), "after", entry(C))
+        assert upnext(radio, mpv) == [A, C, D]
+        await message(radio, "musictty-move", entry(A), "after", entry(C))
+        assert upnext(radio, mpv) == [C, A, D]
+        assert not radio.queued
+        # moved to the top, a radio's track joins the queue: add to queue goes after it
+        await message(radio, "musictty-move", entry(D), "before", entry(C))
+        assert radio.queued == {entry(D)}
+        await message(radio, "musictty-move", entry(D), "after", entry(A))
+        assert not radio.queued
+        # the next track is always ready in advance
+        assert mpv.entries[1]["filename"] == "https://stream/" + C
+        await message(radio, "musictty-play", entry(D))  # the ones before it still come next
+        assert radio.video_id(mpv.entries[mpv.pos]["filename"]) == D
+        assert upnext(radio, mpv) == [C, A]
+        return mpv, radio
+
+    run(scenario())
+
+
+def test_shuffle_keeps_what_has_played(store, monkeypatch):
+    source = FakeSource({S: [S, A, B, C, D, E]})
+    monkeypatch.setattr(radio_module.random, "sample", lambda xs, n: list(reversed(xs)))
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        await load(mpv, radio, 0)
+        await load(mpv, radio, 1)
+        await message(radio, *add("queue", F))
+        await message(radio, "musictty-shuffle")
+        return mpv, radio
+
+    mpv, radio = run(scenario())
+    assert [radio.video_id(f) for f in mpv.filenames()] == [S, A, E, D, C, B, F]
+    assert mpv.pos == 1
+    assert not radio.queued  # the shuffled queue is one queue: add to queue goes after the current
+
+
+def loop(on):
+    return {"event": "property-change", "name": "loop-playlist", "data": "inf" if on else False}
+
+
+def test_repeat_all_stops_the_mixes_and_loops(store):
+    source = FakeSource({S: [S, A, B, C], C: [C, D, E]})
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        await load(mpv, radio, 0)
+        await radio.handle(loop(True))
+        for i in (1, 2, 3):
+            await load(mpv, radio, i)
+        assert source.mixed == [S]  # no mix at the end: the queue starts over
+        # up next goes round to the current track
+        assert [it["id"] for it in mpv.props[UPNEXT_PROPERTY]] == [S, A, B]
+        # repeat all off at the last track: the radio goes on from it
+        await radio.handle(loop(False))
+        await radio.settle()
+        return mpv, radio
+
+    mpv, radio = run(scenario())
+    assert source.mixed == [S, C]
+    assert [radio.video_id(f) for f in mpv.filenames()] == [S, A, B, C, D, E]
+
+
+def test_shuffle_with_repeat_all_goes_round(store, monkeypatch):
+    source = FakeSource({S: [S, A, B, C]})
+    monkeypatch.setattr(radio_module.random, "sample", lambda xs, n: list(reversed(xs)))
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        await radio.handle(loop(True))
+        await load(mpv, radio, 0)
+        await load(mpv, radio, 1)
+        await message(radio, "musictty-shuffle")
+        return mpv, radio
+
+    mpv, radio = run(scenario())
+    # the whole loop after the current track: C, B, then S that had played before it
+    assert [radio.video_id(f) for f in mpv.filenames()] == [A, S, C, B]
+    assert mpv.pos == 0
+
+
+def test_queue_after_an_album_plays_before_the_radio(store):
+    source = FakeSource({A: [A, C, D], E: [E, D]})
+    queue = [Track(S, "s"), Track(A, "a")]
+    spec = LaunchSpec(seed=S, stream=source.stream(S), queue=queue, source="album", then_radio=True)
+
+    async def scenario():
+        mpv, radio = await started(spec, source, store)
+        await load(mpv, radio, 0)
+        # added to the queue: after the album, not in the middle of it
+        await message(radio, *add("queue", B, E))
+        assert upnext(radio, mpv) == [A, B, E]
+        await load(mpv, radio, 1)
+        assert source.mixed == []  # the queue isn't over yet
+        await load(mpv, radio, 2)
+        assert mpv.props[SOURCE_PROPERTY] == "album"  # a queued track is not the radio yet
+        await load(mpv, radio, 3)
+        return mpv, radio
+
+    mpv, radio = run(scenario())
+    assert source.mixed == [E]
+    assert [radio.video_id(f) for f in mpv.filenames()] == [S, A, B, E, D]
+
+
+def test_removing_a_track_queued_twice_keeps_the_other(store):
+    source = FakeSource({S: [S, A, B, C]})
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        await load(mpv, radio, 0)
+        await message(radio, *add("next", A))  # ready in advance: the same stream URL as A's
+        assert mpv.filenames()[1:3] == ["https://stream/" + A] * 2
+        await message(radio, "musictty-remove", mpv.entries[1]["id"])
+        return mpv, radio
+
+    mpv, radio = run(scenario())
+    assert [it["id"] for it in mpv.props[UPNEXT_PROPERTY]] == [A, B, C]

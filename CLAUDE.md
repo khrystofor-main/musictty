@@ -29,7 +29,7 @@ mpv is the hub: it owns the IPC endpoint (`\\.\pipe\musictty` on Windows, a unix
 in the user runtime dir elsewhere). Its clients:
 - `cli.py` — the `musictty` command, a short-lived process per call. Strict parsing like
   v0; menus are replaced by numbers (`history 3`, `liked play 2`, `list back 1`).
-  Playback commands go straight to mpv; `list back` sends `script-message musictty-jump`.
+  Playback commands go straight to mpv; queue edits are script-messages to the radio.
 - `tui.py` — the Textual UI, opened by the bare `musictty` (without a terminal it prints
   the recent radios instead). It observes mpv's properties and the radio's list, keeps
   reconnecting as radios come and go, and quitting it leaves the music playing. Keys in
@@ -37,12 +37,22 @@ in the user runtime dir elsewhere). Its clients:
   artists (`music.py`); an album plays as a queue that turns into a radio
   (`LaunchSpec.then_radio`: no mixes until its last track, then a normal radio). The
   Lyrics tab loads the playing track's lyrics (`music.lyrics`, cached) while it is open and
-  highlights the sung line from the polled time-pos.
+  highlights the sung line from the polled time-pos. The Up next tab shows
+  `user-data/musictty/upnext`; `e`/`E` in any list queue a track (control.enqueue). The key
+  bar at the bottom is a Static built from PLAYER_KEYS / LIST_KEYS (Textual's Footer is one
+  line and didn't fit): new keys go there too.
 - `daemon.py` + `radio.py` — the background process (`python -m musictty.daemon`, a
   `LaunchSpec` as JSON on stdin). It starts mpv, and `Radio` is the port of
   `youtube-music.lua`: refills from the mix, prefetches the next track to a direct
-  stream, trims played entries, publishes `user-data/musictty/list` and `.../source`.
-  It exits when mpv quits.
+  stream, trims played entries, publishes `user-data/musictty/list`, `.../upnext` and
+  `.../source`. It exits when mpv quits.
+- The queue: the radio is the only writer of mpv's playlist. The UI and the CLI send
+  `script-message musictty-<add|remove|move|play|jump|shuffle>` naming entries by entry id,
+  and the radio edits under its lock. `Radio.queued` is the queue proper (an album's or a
+  playlist's tracks, what the user added) as opposed to the radio's own picks: "add to
+  queue" goes after it, and no mix is fetched while any of it is still ahead. Repeat all is
+  mpv's `loop-playlist`, observed by the radio (no mixes, no trimming while it's on); it's
+  per queue, not saved in settings, unlike repeat (`loop-file`).
 
 Other modules: `control.py` (start/stop a radio, volume, repeat: shared by CLI and UI),
 `ai.py` (AI radio: an OpenAI-compatible chat API turns a mood into "Artist - Title" songs;

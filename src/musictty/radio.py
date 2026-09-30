@@ -6,7 +6,11 @@ A port of v0's youtube-music.lua. mpv's playlist is the queue:
 - the next entry is swapped in advance for a direct audio stream, so switching tracks
   never waits for yt-dlp;
 - played entries beyond a limit are trimmed, so the playlist doesn't grow.
-The track list for `musictty list` (and later the TUI) is published in user-data/musictty/list.
+The track list for `musictty list` and the UI is published in user-data/musictty/list, the
+tracks still to play in user-data/musictty/upnext.
+
+The radio is the only one that edits the playlist: the UI and the CLI ask it to through
+script-messages (add, remove, move, shuffle), naming entries by their mpv entry id.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -36,9 +41,16 @@ PREFETCH_AHEAD = 1  # upcoming tracks resolved to direct streams in advance
 T = TypeVar("T")
 
 LIST_PROPERTY = "user-data/musictty/list"
+UPNEXT_PROPERTY = "user-data/musictty/upnext"
 SOURCE_PROPERTY = "user-data/musictty/source"
 PID_PROPERTY = "user-data/musictty/pid"  # the radio process, for `musictty mem`
-JUMP_MESSAGE = "musictty-jump"
+JUMP_MESSAGE = "musictty-jump"  # play an entry where it is: back in the radio's list
+PLAY_MESSAGE = "musictty-play"  # play an upcoming entry now, keeping the ones before it
+ADD_MESSAGE = "musictty-add"  # "next" | "queue", then [[id, title], ...] as JSON
+REMOVE_MESSAGE = "musictty-remove"
+MOVE_MESSAGE = "musictty-move"  # entry, "before" | "after", target entry
+SHUFFLE_MESSAGE = "musictty-shuffle"
+PLAY_NEXT, ADD_TO_QUEUE = "next", "queue"
 
 RADIO_MIX = "radio mix"
 LIKED_PLAYLIST = "liked playlist"
@@ -117,11 +129,15 @@ class Radio:
         self.spec = spec
         self.store = store or Store()
         self.yt = source
-        # the liked playlist: no mixes, nothing trimmed, mpv loops it (--loop-playlist)
-        self.fixed = spec.loops
-        # an album: its tracks in order, the mixes only from its last track on
-        self.album = {t.id for t in spec.queue} if spec.then_radio and spec.queue else set()
-        self.album_last = spec.queue[-1].id if self.album else None
+        # repeat all (mpv's loop-playlist; the liked playlist starts with it): no mixes,
+        # nothing trimmed. Followed as it changes
+        self.looping = spec.loops
+        # a queue (an album, the liked playlist): its tracks in order, the mixes only once
+        # it has played out (see `queued`)
+        self.album = {t.id for t in spec.queue} if spec.queue else set()
+        # the queue proper, as opposed to the radio's own tracks: the entries of a playlist or
+        # an album and the ones the user added, until they play. "Add to queue" goes after them
+        self.queued: set[int] = set()
         self.seen: set[str] = set()  # tracks that were queued or played: never queue them again
         self.fetching = False
         self.direct_id: dict[str, str] = {}  # direct stream URL -> track id
@@ -201,12 +217,19 @@ class Radio:
                 return None
             await self.mpv.command("playlist-move", str(new_at), str(old_at))
             await self.mpv.command("playlist-remove", str(old_at + 1))
-        if entry_id in self.played:
-            self.played.discard(entry_id)
-            self.played.add(new_id)
+        for marks in (self.played, self.queued):
+            if entry_id in marks:
+                marks.discard(entry_id)
+                marks.add(new_id)
         if self.loading == entry_id:
             self.loading = new_id
         return new_id
+
+    def forget(self, gone: dict, rest: list[dict]) -> None:
+        """A removed entry's stream URL, unless the same track is queued with it again."""
+        url = gone.get("filename")
+        if all(e.get("filename") != url for e in rest):
+            self.direct_id.pop(url, None)
 
     def record_seed(self, title: str) -> None:
         self.seed_recorded = True
@@ -230,6 +253,7 @@ class Radio:
     async def run(self) -> None:
         """Start playing and serve mpv's events until it quits."""
         await self.start()
+        await self.mpv.command("observe_property", 1, "loop-playlist")
         while (event := await self.mpv.next_event()) is not None:
             try:
                 await self.handle(event)
@@ -251,6 +275,8 @@ class Radio:
                 await self.on_load_error(event.get("playlist_entry_id"))
             case "client-message":
                 await self.on_message(event.get("args") or [])
+            case "property-change" if event.get("name") == "loop-playlist":
+                await self.on_loop_changed(event.get("data") not in (None, False, "no"))
 
     async def start(self) -> None:
         spec = self.spec
@@ -271,7 +297,9 @@ class Radio:
         if spec.queue is not None:
             self.seen.update(self.album)  # the radio after an album won't repeat it
             for track in spec.queue[1:]:
-                await self.loadfile(track_url(track.id), "append")
+                entry_id = await self.loadfile(track_url(track.id), "append")
+                if entry_id is not None:
+                    self.queued.add(entry_id)
             await self.prefetch_next()
             await self.publish_list()
         else:
@@ -286,24 +314,24 @@ class Radio:
             return
         entry = playlist[pos]
         self.played.add(entry.get("id"))
+        from_queue = entry.get("id") in self.queued
+        self.queued.discard(entry.get("id"))
         video_id = self.video_id(entry.get("filename"))
         if video_id:
             self.seen.add(video_id)
 
-        if not self.fixed:
+        if not self.looping:
             # trim the tail of played entries and top up the queue
-            left = len(playlist) - pos - 1
-            extra = pos - KEEP_BEHIND
-            if extra > 0:
+            extra = max(0, pos - KEEP_BEHIND)
+            if extra:
                 async with self.edit:
                     for gone in playlist[:extra]:
-                        self.direct_id.pop(gone.get("filename"), None)
+                        self.forget(gone, playlist[extra:])
                         self.played.discard(gone.get("id"))
                         await self.mpv.command("playlist-remove", "0")
-            if left < REFILL_WHEN_LEFT and self.album_last in (None, video_id):
-                self.album_last = None  # the album's last track: the radio starts here
-                self.spawn(self.refill(video_id))
-            if self.album and video_id and video_id not in self.album:
+                playlist, pos = playlist[extra:], pos - extra
+            self.top_up(playlist, pos, video_id)
+            if self.album and video_id and video_id not in self.album and not from_queue:
                 # past the album: from here on it's a radio
                 self.album = set()
                 await self.mpv.set(SOURCE_PROPERTY, RADIO_MIX)
@@ -314,6 +342,14 @@ class Radio:
                 self.names[video_id] = await self.mpv.get("media-title") or video_id
             self.log_play(video_id, self.names[video_id])
         await self.publish_list()
+
+    def top_up(self, playlist: list[dict], pos: int, seed: str | None) -> None:
+        """Fetch a mix when few tracks are left, once the queue proper has played out."""
+        ahead = playlist[pos + 1 :]
+        if self.looping or len(ahead) >= REFILL_WHEN_LEFT:
+            return
+        if not any(e.get("id") in self.queued for e in ahead):
+            self.spawn(self.refill(seed))
 
     async def refill(self, seed: str | None) -> None:
         if self.fetching or not seed:
@@ -359,7 +395,7 @@ class Radio:
         for step in range(1, PREFETCH_AHEAD + 1):
             i = pos + step
             if i >= len(playlist):
-                if not self.fixed:
+                if not self.looping:
                     break
                 i %= len(playlist)  # the liked playlist loops
                 if i == pos:
@@ -394,6 +430,7 @@ class Radio:
             self.direct_id[stream.url] = video_id
             await self.replace_entry(entry_id, stream.url, title, stream.user_agent)
             log.info("ready in advance: %s", title)
+            await self.publish_list()  # the entry has a new id
         finally:
             self.resolving.discard(video_id)
 
@@ -418,22 +455,157 @@ class Radio:
             return
         pos = _current(playlist)
         # in the liked playlist the end is fine: --loop-playlist goes back to the start
-        if not self.fixed and playlist and (pos is None or pos >= len(playlist) - 1):
+        if not self.looping and playlist and (pos is None or pos >= len(playlist) - 1):
             self.spawn(self.refill(self.video_id(playlist[-1].get("filename"))))
 
     async def on_message(self, args: list[str]) -> None:
-        # `musictty list back N`: go back to an entry, keeping the queue after it
-        if len(args) == 2 and args[0] == JUMP_MESSAGE:
-            try:
-                entry_id = int(args[1])
-            except ValueError:
+        match args:
+            case [name, entry] if name in (JUMP_MESSAGE, PLAY_MESSAGE) and entry.isdigit():
+                await self.play_entry(int(entry), keep_before=name == PLAY_MESSAGE)
+            case [name, where, tracks] if name == ADD_MESSAGE:
+                try:
+                    items = [Track(str(i), str(t)) for i, t in json.loads(tracks)]
+                except (ValueError, TypeError):
+                    return
+                await self.add(items, next_up=where == PLAY_NEXT)
+            case [name, entry] if name == REMOVE_MESSAGE and entry.isdigit():
+                await self.remove(int(entry))
+            case [name, entry, where, target] if (
+                name == MOVE_MESSAGE and entry.isdigit() and target.isdigit()
+            ):
+                await self.move(int(entry), int(target), after=where == "after")
+            case [name] if name == SHUFFLE_MESSAGE:
+                await self.shuffle()
+
+    async def play_entry(self, entry_id: int, keep_before: bool) -> None:
+        """`list back N` plays an entry where it is (the queue after it is kept). From up next,
+        an entry is moved up to play now, so the ones before it still come next."""
+        async with self.edit:
+            playlist = await self.playlist()
+            at, pos = _index(playlist, entry_id), _current(playlist)
+            if at is None or at == pos:
                 return
-            at = _index(await self.playlist(), entry_id)
+            if keep_before and pos is not None and at > pos + 1:
+                await self.mpv.command("playlist-move", str(at), str(pos + 1))
+                at = pos + 1
+            await self.mpv.command("playlist-play-index", str(at))
+
+    async def add(self, tracks: list[Track], next_up: bool) -> None:
+        """Play next: right after the current track. Add to queue: after what the user queued
+        before, ahead of the radio's own tracks."""
+        if not tracks:
+            return
+        async with self.edit:
+            playlist = await self.playlist()
+            pos = _current(playlist)
+            if pos is None:  # the queue has run out: play them
+                at = None
+            elif next_up:
+                at = pos + 1
+            else:
+                at = pos + 1
+                for i in range(pos + 1, len(playlist)):
+                    if playlist[i].get("id") in self.queued:
+                        at = i + 1
+            for n, track in enumerate(tracks):
+                self.names[track.id] = track.title
+                self.seen.add(track.id)
+                entry_id = await self.loadfile(
+                    track_url(track.id), "append" if at is not None else "append-play"
+                )
+                if entry_id is None:
+                    continue
+                self.queued.add(entry_id)
+                if at is not None:
+                    last = len(playlist) + n  # the entry just appended
+                    await self.mpv.command("playlist-move", str(last), str(at + n))
+        log.info("queued %d tracks (%s)", len(tracks), PLAY_NEXT if next_up else ADD_TO_QUEUE)
+        await self.after_edit()
+
+    async def remove(self, entry_id: int) -> None:
+        async with self.edit:
+            playlist = await self.playlist()
+            at = _index(playlist, entry_id)
+            if at is None or at == _current(playlist):  # the playing track stays
+                return
+            await self.mpv.command("playlist-remove", str(at))
+            self.forget(playlist[at], playlist[:at] + playlist[at + 1 :])
+            self.queued.discard(entry_id)
+            self.played.discard(entry_id)
+        await self.after_edit()
+
+    async def move(self, entry_id: int, target_id: int, after: bool) -> None:
+        """Put an upcoming entry just before or after another one."""
+        async with self.edit:
+            playlist = await self.playlist()
+            at, to = _index(playlist, entry_id), _index(playlist, target_id)
+            if at is None or to is None or _current(playlist) in (at, to) or at == to:
+                return
+            # mpv puts the entry in the target's place, shifting the target down
+            await self.mpv.command("playlist-move", str(at), str(to + 1 if after else to))
+            # moved in among the queue, it's part of it; among the radio's tracks, one of them
+            playlist = await self.playlist()
+            at = _index(playlist, entry_id)
             if at is not None:
-                await self.mpv.command("playlist-play-index", str(at))
+                before = playlist[at - 1] if at else {}
+                if before.get("current") or before.get("id") in self.queued:
+                    self.queued.add(entry_id)
+                else:
+                    self.queued.discard(entry_id)
+        await self.after_edit()
+
+    async def shuffle(self) -> None:
+        """Shuffle what's up next; the played tracks and the current one stay as they are."""
+        async with self.edit:
+            playlist = await self.playlist()
+            pos = _current(playlist)
+            if pos is None:
+                return
+            ids = [e.get("id") for e in playlist]
+            upcoming = self.upcoming(len(ids), pos)
+            order = random.sample(upcoming, len(upcoming))
+            # the target order, built front to back with mpv's moves, mirrored in `ids`
+            wanted = [ids[i] for i in range(pos + 1)] if not self.looping else [ids[pos]]
+            wanted += [ids[i] for i in order]
+            for k, entry_id in enumerate(wanted):
+                i = ids.index(entry_id)
+                if i != k:
+                    await self.mpv.command("playlist-move", str(i), str(k))
+                    ids.insert(k, ids.pop(i))
+            self.queued.clear()  # the shuffled queue is one queue now
+        log.info("shuffled %d tracks", len(upcoming))
+        await self.after_edit()
+
+    async def after_edit(self) -> None:
+        await self.prefetch_next()
+        await self.publish_list()
+
+    async def on_loop_changed(self, looping: bool) -> None:
+        if looping == self.looping:
+            return
+        self.looping = looping
+        log.info("repeat all %s", "on" if looping else "off")
+        if not looping:
+            # the queue may be at its end already: the radio goes on from there
+            playlist = await self.playlist()
+            pos = _current(playlist)
+            if pos is not None:
+                self.top_up(playlist, pos, self.video_id(playlist[-1].get("filename")))
+        await self.after_edit()
+
+    def upcoming(self, count: int, pos: int) -> list[int]:
+        """Indexes of the entries still to play, in order; with repeat all, round to the current."""
+        ahead = list(range(pos + 1, count))
+        return ahead + list(range(pos)) if self.looping else ahead
+
+    def item(self, entry: dict, fallback: str | None = None) -> dict:
+        video_id = self.video_id(entry.get("filename"))
+        title = (self.names.get(video_id) if video_id else None) or fallback or video_id or "?"
+        return {"entry": entry.get("id"), "id": video_id or "", "title": title}
 
     async def publish_list(self) -> None:
-        """Played entries and the current one, in queue order.
+        """The radio's list: played entries and the current one, in queue order. Up next: the
+        entries still to play.
 
         entry is mpv's permanent entry id: it doesn't shift when old entries are trimmed.
         """
@@ -444,16 +616,13 @@ class Radio:
         items = []
         for i, entry in enumerate(playlist):
             if i <= pos or entry.get("id") in self.played:
-                video_id = self.video_id(entry.get("filename"))
-                title = self.names.get(video_id) if video_id else None
-                if not title and i == pos:
-                    title = await self.mpv.get("media-title")
-                items.append(
-                    {
-                        "entry": entry.get("id"),
-                        "id": video_id or "",
-                        "title": title or video_id or "?",
-                        "current": i == pos,
-                    }
-                )
+                item = self.item(entry)
+                if i == pos and item["title"] in (item["id"], "?"):  # not named yet
+                    item = self.item(entry, await self.mpv.get("media-title"))
+                items.append({**item, "current": i == pos})
+        upnext = [
+            {**self.item(playlist[i]), "queued": playlist[i].get("id") in self.queued}
+            for i in self.upcoming(len(playlist), pos)
+        ]
         await self.mpv.set(LIST_PROPERTY, items)
+        await self.mpv.set(UPNEXT_PROPERTY, upnext)

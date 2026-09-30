@@ -28,14 +28,24 @@ songs, and never stops until you tell it to. Windows, macOS and Linux.
 ## The player
 
 `musictty` on its own opens the player: what's playing, the current radio, recent radios,
-history, liked tracks, search and lyrics.
+history, liked tracks, search, lyrics and what's up next. The bar at the bottom shows the keys,
+the second line those of the list you're in.
 
-Keys: `space` pause, `n`/`p` next and previous, `+`/`-` volume, `l` like, `r` repeat,
-`s` stop, `/` search, `a` AI radio, `1`–`6` tabs, `q` quit (the music keeps playing).
+Keys: `space` pause, `n`/`p` next and previous, `+`/`-` volume, `,`/`.` seek 10 seconds
+back and forward, `l` like, `r` repeat the track, `R` repeat the whole queue, `x` shuffle
+what's up next, `s` stop, `/` search, `a` AI radio, `1`–`7` tabs, `q` quit (the music keeps
+playing).
 
-In the lists, `enter` starts a radio from a track. `←` jumps back in the current radio; in
+In the lists, `enter` starts a radio from a track, `e` adds it to the queue and `E` plays it
+next (an album from the search goes in whole). `←` jumps back in the current radio; in
 liked, `→` plays them in a loop from that track and `←` does the same with it on repeat,
 `delete` removes it.
+
+**Up next** (tab `7`) is what plays after the current track: the queue first (what you added,
+the rest of an album or a playlist), then the radio's own picks. `enter` plays a track now
+(the ones before it still come next), `E` moves it to the top, `shift+↑`/`shift+↓` move it,
+`delete` removes it. The radio keeps adding picks once the queue has played out; with repeat
+all it adds nothing and the queue starts over.
 
 **Search** finds songs, albums and artists on YouTube Music: a song starts a radio, an album
 plays in order and then turns into a radio from its last track, an artist shows their top
@@ -65,7 +75,10 @@ Everything also works from the command line, with numbers where the player has l
 musictty search daft punk     # a radio from the first matching song
 musictty now                  # Daft Punk — Digital Love · radio mix
 musictty history              # recently played tracks; `musictty history 3` plays one
+musictty history queue 3      # add it to the queue instead (`history next 3`: play it next)
+musictty upnext               # what's coming up; `musictty upnext remove 2` takes one out
 musictty liked play 2         # liked tracks in a loop, from the second one down
+musictty seek +30 | shuffle | repeat all on
 musictty next | prev | pause | play | stop | like | mem
 ```
 
@@ -97,6 +110,7 @@ still use it).
 - [x] Terminal UI ([Textual](https://textual.textualize.io/)): player, radios, history, likes, search
 - [x] Rich search: songs, albums, artists
 - [x] Lyrics, synced with the song
+- [x] Queue: up next, play next, add to queue, shuffle, repeat all, seek
 - [ ] Playlists in search
 - [x] AI radio: describe a mood in plain words, and a language model picks the songs
 - [ ] Album art in the terminal
