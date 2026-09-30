@@ -11,7 +11,7 @@ from typing import TypeVar
 from . import paths, player, youtube
 from .ipc import Mpv, NotRunning
 from .models import Track
-from .radio import LIKED_PLAYLIST, LIST_PROPERTY, RADIO_MIX, LaunchSpec
+from .radio import ALBUM, LIKED_PLAYLIST, LIST_PROPERTY, RADIO_MIX, LaunchSpec
 from .store import MAX_VOLUME, Store
 
 T = TypeVar("T")
@@ -69,8 +69,12 @@ async def start(
     query: str | None = None,
     queue: list[Track] | None = None,
     repeat_one: bool = False,
+    album: bool = False,
 ) -> None:
-    """Start a new radio (or the liked playlist), replacing the playing one."""
+    """Start a new radio, replacing the playing one.
+
+    With a queue: the liked playlist in a loop, or an album followed by a radio.
+    """
     if not player.find_mpv():
         raise Failure("mpv not found")
     if query is not None:
@@ -87,7 +91,8 @@ async def start(
         seed=seed,
         stream=stream,
         queue=queue,
-        source=LIKED_PLAYLIST if queue is not None else RADIO_MIX,
+        source=ALBUM if album else LIKED_PLAYLIST if queue is not None else RADIO_MIX,
+        then_radio=album,
         volume=settings.volume,
         # repeat is global and survives radio changes; repeat_one is for this run only
         loop_file=settings.repeat or repeat_one,

@@ -10,6 +10,7 @@ dependencies = [
     "platformdirs>=4",
     "textual>=8.2.8",
     "yt-dlp[default,deno]",
+    "ytmusicapi>=1.12.3",
 ]
 
 [project.scripts]

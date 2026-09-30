@@ -40,6 +40,7 @@ JUMP_MESSAGE = "musictty-jump"
 
 RADIO_MIX = "radio mix"
 LIKED_PLAYLIST = "liked playlist"
+ALBUM = "album"
 
 
 @dataclass
@@ -52,6 +53,13 @@ class LaunchSpec:
     source: str = RADIO_MIX  # shown by `musictty now`
     volume: int = 70
     loop_file: bool = False
+    # the queue plays once, then the radio goes on from its last track (an album)
+    then_radio: bool = False
+
+    @property
+    def loops(self) -> bool:
+        """A fixed playlist that starts over at the end: the liked tracks."""
+        return self.queue is not None and not self.then_radio
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -68,6 +76,7 @@ class LaunchSpec:
             source=data.get("source") or RADIO_MIX,
             volume=int(data.get("volume", 70)),
             loop_file=bool(data.get("loop_file", False)),
+            then_radio=bool(data.get("then_radio", False)),
         )
 
 
@@ -106,7 +115,10 @@ class Radio:
         self.store = store or Store()
         self.yt = source
         # the liked playlist: no mixes, nothing trimmed, mpv loops it (--loop-playlist)
-        self.fixed = spec.queue is not None
+        self.fixed = spec.loops
+        # an album: its tracks in order, the mixes only from its last track on
+        self.album = {t.id for t in spec.queue} if spec.then_radio and spec.queue else set()
+        self.album_last = spec.queue[-1].id if self.album else None
         self.seen: set[str] = set()  # tracks that were queued or played: never queue them again
         self.fetching = False
         self.direct_id: dict[str, str] = {}  # direct stream URL -> track id
@@ -114,7 +126,8 @@ class Radio:
         self.names: dict[str, str] = {}  # track id -> "Artist — Title"
         # entries that have played: after going back, `list` still shows the ones "ahead"
         self.played: set[int] = set()
-        self.seed_recorded = self.fixed  # the liked playlist is not a radio: no seed history
+        # a playlist or an album is not a radio: no seed history
+        self.seed_recorded = spec.queue is not None
         self.last_logged: str | None = None
         # the entry being loaded, from start-file. Events come in order but may be handled
         # after the user has already moved on: file-loaded is about this entry, not the current
@@ -252,6 +265,7 @@ class Radio:
             # it didn't work in advance: let mpv ask yt-dlp itself
             await self.loadfile(track_url(spec.seed), "replace")
         if spec.queue is not None:
+            self.seen.update(self.album)  # the radio after an album won't repeat it
             for track in spec.queue[1:]:
                 await self.loadfile(track_url(track.id), "append")
             await self.prefetch_next()
@@ -282,8 +296,13 @@ class Radio:
                         self.direct_id.pop(gone.get("filename"), None)
                         self.played.discard(gone.get("id"))
                         await self.mpv.command("playlist-remove", "0")
-            if left < REFILL_WHEN_LEFT:
+            if left < REFILL_WHEN_LEFT and self.album_last in (None, video_id):
+                self.album_last = None  # the album's last track: the radio starts here
                 self.spawn(self.refill(video_id))
+            if self.album and video_id and video_id not in self.album:
+                # past the album: from here on it's a radio
+                self.album = set()
+                await self.mpv.set(SOURCE_PROPERTY, RADIO_MIX)
 
         await self.prefetch_next()
         if video_id:

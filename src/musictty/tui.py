@@ -16,8 +16,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Footer, Input, OptionList, ProgressBar, Static, TabbedContent, TabPane
+from textual.widgets.option_list import Option
 
-from . import control, paths, player
+from . import control, music, paths, player
 from .control import Failure
 from .ipc import Mpv, MpvError, NotRunning
 from .models import Track
@@ -27,8 +28,14 @@ from .store import Store
 OBSERVED = ("media-title", "pause", "volume", "loop-file", "duration")
 OBSERVED += (LIST_PROPERTY, SOURCE_PROPERTY)
 
-# tab id -> title; keys 1-4 switch between them
-TABS = {"radio": "Radio", "recent": "Recent", "history": "History", "liked": "Liked"}
+# tab id -> title; keys 1-5 switch between them
+TABS = {
+    "radio": "Radio",
+    "recent": "Recent",
+    "history": "History",
+    "liked": "Liked",
+    "search": "Search",
+}
 
 
 def clock(seconds: float | None) -> str:
@@ -39,7 +46,8 @@ def clock(seconds: float | None) -> str:
 
 
 class TrackList(OptionList):
-    """Tracks of one tab. `rows` are the radio's list items (dicts) or Tracks."""
+    """Tracks of one tab. `rows` are the radio's list items (dicts), Tracks or search Results;
+    None for a heading."""
 
     def __init__(self, kind: str):
         super().__init__(markup=False, id=f"{kind}-list")
@@ -59,6 +67,14 @@ class TrackList(OptionList):
                 self.highlighted = at
                 return
         self.highlighted = min(old or 0, len(rows) - 1)
+
+
+def heading(text: str) -> Option:
+    return Option(Text(text, style="bold"), disabled=True)
+
+
+def result_line(result: music.Result) -> Text:
+    return Text.assemble(result.title, (f"  {result.detail}" if result.detail else "", "dim"))
 
 
 def row_id(row: Any) -> str:
@@ -106,6 +122,8 @@ class MusicApp(App):
         self.props: dict[str, Any] = {}
         self.position: float | None = None
         self.liked_ids: set[str] = set()  # refreshed with the lists
+        # the search tab: what an artist's songs replaced, for going back with ←
+        self.search_back: list[tuple[list[Any], list[Any]]] = []
 
     def compose(self) -> ComposeResult:
         with Vertical(id="player"):
@@ -115,7 +133,8 @@ class MusicApp(App):
             for n, (tab, title) in enumerate(TABS.items(), 1):
                 with TabPane(f"{n} {title}", id=tab):
                     yield TrackList(tab)
-        yield Input(placeholder="/ search YouTube Music, enter starts a radio", id="search")
+        placeholder = "/ search YouTube Music: songs, albums, artists"
+        yield Input(placeholder=placeholder, id="search")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -262,7 +281,15 @@ class MusicApp(App):
     def act(self, lst: TrackList, key: str, i: int) -> None:
         """What a key does with a row, as in v0's menus."""
         row = lst.rows[i]
+        if row is None:  # a heading
+            return
         match lst.kind, key:
+            case "search", "left":
+                self.search_go_back()
+            case "search", "enter" | "right" if row.kind == music.ALBUMS:
+                self.run_worker(self.play_album(row), group="launch", exclusive=True)
+            case "search", "enter" | "right" if row.kind == music.ARTISTS:
+                self.run_worker(self.show_artist(row), group="search", exclusive=True)
             case "radio", "left":
                 # jump back here, keeping the queue
                 if not row.get("current"):
@@ -352,16 +379,90 @@ class MusicApp(App):
     def action_back(self) -> None:
         if isinstance(self.focused, Input):
             self.active_list().focus()
+        elif self.focused is self.track_list("search") and self.search_back:
+            self.search_go_back()
         else:
             self.exit()
+
+    # --- search ---
+
+    def show_search(self, rows: list[Any], options: list[Any]) -> None:
+        lst = self.track_list("search")
+        lst.rows = rows
+        lst.set_options(options)
+        lst.highlighted = next((i for i, row in enumerate(rows) if row is not None), None)
 
     @on(Input.Submitted, "#search")
     def search(self, event: Input.Submitted) -> None:
         query = event.value.strip()
         if query:
             event.input.clear()
-            self.active_list().focus()
-            self.launch(None, f"«{query}»", query=query)
+            self.action_tab("search")
+            self.run_worker(self.find(query), group="search", exclusive=True)
+
+    async def find(self, query: str) -> None:
+        self.search_back.clear()
+        self.show_search([None], [heading(f"searching «{query}»…")])
+        try:
+            found = await asyncio.to_thread(music.search, query)
+        except Exception:
+            self.show_search([None], [heading(f"search failed: «{query}»")])
+            return
+        rows: list[Any] = []
+        options: list[Any] = []
+        for title, results in (
+            ("Songs", found.songs),
+            ("Albums", found.albums),
+            ("Artists", found.artists),
+        ):
+            if results:
+                if rows:
+                    rows.append(None)
+                    options.append(Option("", disabled=True))
+                rows.append(None)
+                options.append(heading(title))
+                rows += results
+                options += [result_line(r) for r in results]
+        if not rows:
+            rows, options = [None], [heading(f"nothing found: «{query}»")]
+        self.show_search(rows, options)
+
+    async def show_artist(self, artist: music.Result) -> None:
+        lst = self.track_list("search")
+        before = (lst.rows, [lst.get_option_at_index(i) for i in range(lst.option_count)])
+        try:
+            name, songs = await asyncio.to_thread(music.artist_songs, artist.id)
+        except Exception:
+            self.notify(f"could not open {artist.title}", severity="error")
+            return
+        if not songs:
+            self.notify(f"no songs of {artist.title}")
+            return
+        self.search_back.append(before)
+        header = heading(f"{name or artist.title}: top songs  (← back)")
+        self.show_search([None, *songs], [header, *map(result_line, songs)])
+
+    def search_go_back(self) -> None:
+        if self.search_back:
+            self.show_search(*self.search_back.pop())
+
+    async def play_album(self, album: music.Result) -> None:
+        """The album in order, then a radio from its last track."""
+        self.notify(f"starting {album.title}…", timeout=3)
+        try:
+            title, tracks = await asyncio.to_thread(music.album, album.id)
+        except Exception:
+            self.notify(f"could not open {album.title}", severity="error")
+            return
+        if not tracks:
+            self.notify(f"nothing playable on {album.title}")
+            return
+        try:
+            await control.start(tracks[0].id, queue=tracks, album=True)
+        except Failure as e:
+            self.notify(str(e), severity="error")
+            return
+        self.action_tab("radio")
 
 
 def run() -> None:

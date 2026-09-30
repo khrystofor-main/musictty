@@ -9,8 +9,9 @@ import pytest
 from fakes import FakeSource, tid
 from textual.widgets import Static, TabbedContent
 
-from musictty import control, paths, player
+from musictty import control, music, paths, player
 from musictty.models import Track
+from musictty.music import ALBUMS, ARTISTS, SONGS, Result
 from musictty.radio import LaunchSpec, Radio
 from musictty.store import Store
 from musictty.tui import MusicApp, TrackList
@@ -74,9 +75,6 @@ def test_with_the_radio_off(monkeypatch):
             assert Store().liked() == [Track(S, "s"), Track(B, "b")]
             assert lines(app.track_list("liked")) == ["b", "s"]
 
-            await pilot.press("slash", *"daft punk", "enter")
-            await until(pilot, lambda: len(started) == 4)
-
             await pilot.press("q")
         return app
 
@@ -88,8 +86,67 @@ def test_with_the_radio_off(monkeypatch):
         (S, {}),
         (B, {"queue": queue_b, "repeat_one": False}),
         (A, {"queue": queue_a, "repeat_one": True}),
-        (None, {"query": "daft punk"}),
     ]
+
+
+def test_search(monkeypatch):
+    songs = [Result(SONGS, S, "Daft Punk — Digital Love", "4:58")]
+    albums = [Result(ALBUMS, "MPREb_1", "Daft Punk — Discovery", "Album · 2001")]
+    artists = [Result(ARTISTS, "UCdp", "Daft Punk")]
+    album = [Track(A, "Daft Punk — One More Time"), Track(B, "Daft Punk — Aerodynamic")]
+    top = [Result(SONGS, B, "Daft Punk — Around the World")]
+    monkeypatch.setattr(
+        music,
+        "search",
+        lambda q: music.Found(songs, albums, artists) if q == "daft punk" else music.Found(),
+    )
+    monkeypatch.setattr(music, "album", lambda browse_id: ("Daft Punk — Discovery", album))
+    monkeypatch.setattr(music, "artist_songs", lambda browse_id: ("Daft Punk", top))
+    started = []
+
+    async def fake_start(seed=None, **kwargs):
+        started.append((seed, kwargs))
+
+    monkeypatch.setattr(control, "start", fake_start)
+    results = [
+        "Songs",
+        "Daft Punk — Digital Love  4:58",
+        "",
+        "Albums",
+        "Daft Punk — Discovery  Album · 2001",
+        "",
+        "Artists",
+        "Daft Punk",
+    ]
+
+    async def scenario():
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            search = app.track_list("search")
+            await pilot.press("slash", *"daft punk", "enter")
+            await until(pilot, lambda: lines(search) == results)
+            assert app.query_one(TabbedContent).active == "search"
+            assert search.highlighted == 1  # headings are skipped
+
+            await pilot.press("enter")  # a song: a radio from it
+            await until(pilot, lambda: len(started) == 1)
+
+            await pilot.press("5", "down", "enter")  # an album: in order, then a radio
+            await until(pilot, lambda: len(started) == 2)
+
+            await pilot.press("5", "down", "enter")  # an artist: the top songs
+            await until(pilot, lambda: lines(search)[1:] == ["Daft Punk — Around the World"])
+            await pilot.press("left")
+            await until(pilot, lambda: lines(search) == results)
+            await pilot.press("down", "down", "enter", "escape")  # esc goes back too
+            await until(pilot, lambda: lines(search) == results)
+
+            await pilot.press("slash", *"zzz", "enter")
+            await until(pilot, lambda: lines(search) == ["nothing found: «zzz»"])
+            await pilot.press("q")
+
+    asyncio.run(scenario())
+    assert started == [(S, {}), (A, {"queue": album, "album": True})]
 
 
 @pytest.mark.skipif(
