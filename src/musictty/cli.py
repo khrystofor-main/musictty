@@ -54,7 +54,8 @@ musictty — endless music radio in the terminal
   musictty ai <mood>           the ai picks songs for a mood, then the radio goes on
                                (key in DEEPSEEK_API_KEY or NOUS_API_KEY)
 
-  musictty                     the player: now playing, radios, history, liked, search
+  musictty                     the player: now playing, radios, history, liked, search,
+                               lyrics, up next, playlists, home
   musictty recent              recent radios
   musictty <n>                 start recent radio n again
 
@@ -88,7 +89,8 @@ musictty — endless music radio in the terminal
   musictty unlike              remove the current track from liked
   musictty dislike             skip the current track, and never play it on a radio again
   musictty disliked            disliked tracks
-  musictty disliked remove <n> take track n off the disliked list
+  musictty disliked remove <n>
+                               take track n off the disliked list
   musictty now                 what's playing and from where (radio mix or playlist)
   musictty next                next track
   musictty prev                previous track
