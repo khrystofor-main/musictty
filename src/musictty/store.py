@@ -4,6 +4,7 @@
 - plays.tsv   every started track of every radio (`musictty history`)
 - liked.tsv   liked tracks (`musictty like / liked`)
 - settings.json  volume and repeat, shared by all radios
+- playlists.json  your own playlists: [{"name": ..., "tracks": [[id, title], ...]}, ...]
 
 The same line format as v0, so its files can be imported as they are.
 """
@@ -25,9 +26,20 @@ SEEDS = "seeds.tsv"
 PLAYS = "plays.tsv"
 LIKED = "liked.tsv"
 SETTINGS = "settings.json"
+PLAYLISTS = "playlists.json"
 
 DEFAULT_VOLUME = 70
 MAX_VOLUME = 130  # mpv's own limit
+
+
+@dataclass
+class Playlist:
+    name: str
+    tracks: list[Track]
+
+
+class PlaylistError(Exception):
+    """Something to tell the user: a name taken, a playlist gone."""
 
 
 @dataclass
@@ -168,6 +180,76 @@ class Store:
 
     def save_settings(self, settings: Settings) -> None:
         write_lines(self.path(SETTINGS), [json.dumps(asdict(settings))])
+
+    # --- playlists ---
+
+    def playlists(self) -> list[Playlist]:
+        """Your playlists, in the order they were made."""
+        try:
+            data = json.loads(self.path(PLAYLISTS).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        out = []
+        for item in data if isinstance(data, list) else []:
+            try:
+                tracks = [Track(str(i), str(t)) for i, t in item.get("tracks") or []]
+                out.append(Playlist(str(item["name"]), tracks))
+            except (AttributeError, KeyError, TypeError, ValueError):
+                continue  # a hand-edited entry that makes no sense
+        return out
+
+    def _save_playlists(self, playlists: list[Playlist]) -> None:
+        data = [{"name": p.name, "tracks": [[t.id, t.title] for t in p.tracks]} for p in playlists]
+        write_lines(self.path(PLAYLISTS), [json.dumps(data, ensure_ascii=False, indent=1)])
+
+    def _find(self, playlists: list[Playlist], name: str) -> Playlist:
+        found = next((p for p in playlists if p.name == name), None)
+        if found is None:
+            raise PlaylistError(f"no playlist «{name}»")
+        return found
+
+    def create_playlist(self, name: str) -> Playlist:
+        name = " ".join(name.split())
+        if not name:
+            raise PlaylistError("a playlist needs a name")
+        playlists = self.playlists()
+        if any(p.name.casefold() == name.casefold() for p in playlists):
+            raise PlaylistError(f"«{name}» already exists")
+        playlist = Playlist(name, [])
+        self._save_playlists([*playlists, playlist])
+        return playlist
+
+    def delete_playlist(self, name: str) -> None:
+        playlists = self.playlists()
+        self._find(playlists, name)
+        self._save_playlists([p for p in playlists if p.name != name])
+
+    def add_to_playlist(self, name: str, tracks: list[Track]) -> int:
+        """Add tracks at the end; ones already there are skipped. Returns how many were added."""
+        playlists = self.playlists()
+        playlist = self._find(playlists, name)
+        new: dict[str, Track] = {t.id: t for t in playlist.tracks}
+        count = len(new)
+        for track in tracks:
+            new.setdefault(track.id, track)
+        playlist.tracks = list(new.values())
+        self._save_playlists(playlists)
+        return len(new) - count
+
+    def remove_from_playlist(self, name: str, track_id: str) -> None:
+        playlists = self.playlists()
+        playlist = self._find(playlists, name)
+        playlist.tracks = [t for t in playlist.tracks if t.id != track_id]
+        self._save_playlists(playlists)
+
+    def move_in_playlist(self, name: str, track_id: str, step: int) -> None:
+        playlists = self.playlists()
+        tracks = self._find(playlists, name).tracks
+        at = next((i for i, t in enumerate(tracks) if t.id == track_id), None)
+        if at is None or not 0 <= at + step < len(tracks):
+            return
+        tracks.insert(at + step, tracks.pop(at))
+        self._save_playlists(playlists)
 
 
 # --- import from v0 (the PowerShell version) ---

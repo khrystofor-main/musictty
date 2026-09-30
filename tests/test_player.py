@@ -96,6 +96,8 @@ def test_radio_and_commands_on_a_real_player(files, capsys):
         assert await command("list") == (0, f" 1. ▶ {source.title(A)}\n 2.   {source.title(S)}\n")
 
         assert await command("like") == (0, f"♥ {source.title(A)}\n")
+        assert await command("playlists", "new", "Road") == (0, "made Road\n")
+        assert await command("playlists", "add", "1") == (0, f"{source.title(A)} → Road\n")
         assert await command("repeat", "on") == (0, "")
         assert await command("now") == (0, f"↻ ♥ {source.title(A)} · radio mix\n")
         assert await command("repeat", "off") == (0, "")

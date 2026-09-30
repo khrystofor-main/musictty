@@ -3,10 +3,13 @@ import pytest
 from musictty.models import Track
 from musictty.store import (
     LIKED,
+    PLAYLISTS,
     PLAYS,
     SEEDS,
     SETTINGS,
     AlreadyImported,
+    Playlist,
+    PlaylistError,
     Settings,
     Store,
     import_v0,
@@ -120,3 +123,34 @@ def test_import_v0_empty_folder_is_not_marked(store, tmp_path):
     empty.mkdir()
     assert import_v0(store, empty) == {}
     import_v0(store, empty)  # a wrong folder can be corrected: no AlreadyImported
+
+
+def test_playlists(isolated):
+    store = Store()
+    assert store.playlists() == []
+    store.create_playlist("  Evening   jazz ")  # spaces are tidied
+    store.create_playlist("Работа")
+    with pytest.raises(PlaylistError):
+        store.create_playlist("evening jazz")  # names are unique, whatever the case
+    with pytest.raises(PlaylistError):
+        store.create_playlist("   ")
+    a, b, c = A, B, C
+    assert store.add_to_playlist("Evening jazz", [a, b, a]) == 2
+    assert store.add_to_playlist("Evening jazz", [b, c]) == 1  # b is there already
+    store.move_in_playlist("Evening jazz", c.id, -1)
+    store.move_in_playlist("Evening jazz", a.id, -1)  # at the top already
+    store.remove_from_playlist("Evening jazz", b.id)
+    assert store.playlists() == [Playlist("Evening jazz", [a, c]), Playlist("Работа", [])]
+    store.delete_playlist("Evening jazz")
+    assert [p.name for p in store.playlists()] == ["Работа"]
+    with pytest.raises(PlaylistError):
+        store.add_to_playlist("Evening jazz", [a])
+
+
+def test_broken_playlists_file_is_empty_not_fatal(isolated):
+    store = Store()
+    store.path(PLAYLISTS).parent.mkdir(parents=True, exist_ok=True)
+    store.path(PLAYLISTS).write_text("{not json", encoding="utf-8")
+    assert store.playlists() == []
+    store.path(PLAYLISTS).write_text('[{"name": "ok", "tracks": [["x", "y"]]}, {"nope": 1}, 5]')
+    assert store.playlists() == [Playlist("ok", [Track("x", "y")])]

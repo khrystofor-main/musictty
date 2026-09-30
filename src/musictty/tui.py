@@ -15,11 +15,13 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, ProgressBar, Static, TabbedContent, TabPane
 from textual.widgets.option_list import Option
 
 from . import control, music, paths, player
 from .control import Failure
+from .dialogs import Ask, Confirm, Pick
 from .ipc import Mpv, MpvError, NotRunning
 from .models import Track
 from .radio import (
@@ -31,18 +33,19 @@ from .radio import (
     MOVE_MESSAGE,
     PLAY_MESSAGE,
     PLAY_NEXT,
+    PLAYLIST,
     RADIO_MIX,
     REMOVE_MESSAGE,
     SHUFFLE_MESSAGE,
     SOURCE_PROPERTY,
     UPNEXT_PROPERTY,
 )
-from .store import Store
+from .store import Playlist, PlaylistError, Store
 
 OBSERVED = ("media-title", "pause", "volume", "loop-file", "loop-playlist", "duration")
 OBSERVED += (LIST_PROPERTY, SOURCE_PROPERTY, UPNEXT_PROPERTY)
 
-# tab id -> title; keys 1-7 switch between them
+# tab id -> title; keys 1-8 switch between them
 TABS = {
     "radio": "Radio",
     "recent": "Recent",
@@ -51,13 +54,15 @@ TABS = {
     "search": "Search",
     "lyrics": "Lyrics",
     "upnext": "Up next",
+    "playlists": "Playlists",
 }
+NEW_PLAYLIST = "+ new playlist"  # the first row of the playlists tab
 SEEK_STEP = 10  # seconds
 
 LYRICS_TOP = 2  # the track's title and a blank line above the lyrics
 
 
-SEARCH_HINT = "/ search YouTube Music: songs, albums, artists"
+SEARCH_HINT = "/ search YouTube Music: songs, albums, artists, playlists"
 AI_HINT = "a · describe a mood, the AI picks songs to start a radio"
 
 
@@ -114,11 +119,25 @@ def page_line(result: music.Result, page: music.Page, n: int | None) -> Text:
 
 
 # rows of the search tab that open a page
-PAGES = {music.ARTISTS, music.ALBUMS, music.MORE_SONGS, music.MORE_ALBUMS}
+PAGES = {music.ARTISTS, music.ALBUMS, music.PLAYLISTS, music.MORE_SONGS, music.MORE_ALBUMS}
+# rows that stand for several tracks: they play in order, then a radio
+COLLECTIONS = {music.ALBUMS: ("album", ALBUM), music.PLAYLISTS: ("playlist", PLAYLIST)}
 
 
 def row_id(row: Any) -> str:
     return (row.get("id") or "") if isinstance(row, dict) else row.id
+
+
+def row_key(row: Any) -> Any:
+    """What keeps the cursor on a row of the playlists tab when it's redrawn."""
+    if isinstance(row, Playlist):
+        return ("playlist", row.name)
+    return row.id if isinstance(row, Track) else row
+
+
+def playlist_line(playlist: Playlist) -> Text:
+    n = len(playlist.tracks)
+    return Text.assemble(playlist.name, (f"  {n} song{'' if n == 1 else 's'}", "dim"))
 
 
 def row_title(row: Any) -> str:
@@ -137,14 +156,14 @@ PLAYER_KEYS = [
     ("x", "shuffle"),
     ("s", "stop"),
 ]
-QUEUE_KEYS = [("e", "queue"), ("E", "play next")]
+QUEUE_KEYS = [("e/E", "queue/next"), ("S", "to playlist")]
 LIST_KEYS = {
     "radio": [("enter", "radio"), ("←", "jump back"), *QUEUE_KEYS],
     "recent": [("enter", "radio"), *QUEUE_KEYS],
     "history": [("enter", "radio"), *QUEUE_KEYS],
     "liked": [
         ("enter", "radio"),
-        ("→/←", "loop/+repeat"),
+        ("→/←", "loop"),
         ("del", "unlike"),
         *QUEUE_KEYS,
     ],
@@ -155,6 +174,15 @@ LIST_KEYS = {
         ("E", "to the top"),
         ("shift+↑/↓", "move"),
         ("del", "remove"),
+        ("S", "to playlist"),
+    ],
+    "playlists": [("enter", "play"), ("→", "open"), ("del", "delete")],
+    "playlist": [
+        ("enter", "play"),
+        ("←", "back"),
+        ("shift+↑/↓", "move"),
+        ("del", "remove"),
+        ("e/E", "queue/next"),
     ],
 }
 APP_KEYS = [("/", "search"), ("a", "ai radio"), ("q", "quit")]
@@ -194,6 +222,7 @@ class MusicApp(App):
         Binding("s", "stop", "stop"),
         Binding("e", f"enqueue('{ADD_TO_QUEUE}')", "queue"),
         Binding("E,shift+e", f"enqueue('{PLAY_NEXT}')", "play next", key_display="E"),
+        Binding("S,shift+s", "save", "to playlist", key_display="S"),
         Binding("shift+up", "move(-1)", "up", show=False),
         Binding("shift+down", "move(1)", "down", show=False),
         Binding("slash", "search", "search", key_display="/"),
@@ -215,6 +244,8 @@ class MusicApp(App):
         # the search tab: the page shown (None: the results) and what it replaced, for ←
         self.search_page: music.Page | None = None
         self.search_back: list[tuple[list[Any], list[Any], music.Page | None]] = []
+        # the playlists tab: the playlist open in it, None for the list of them
+        self.playlist_open: str | None = None
         # the lyrics tab: whose lyrics it shows, and the lyrics already fetched
         self.lyrics_id: str | None = ""  # "" = nothing shown yet; None = nothing playing
         self.lyrics_cache: dict[str, music.Lyrics | None] = {}
@@ -349,6 +380,7 @@ class MusicApp(App):
             keep = radio_list.rows[radio_list.highlighted or 0].get("entry")
             radio_list.show(radio, lines, keep, key=lambda row: row.get("entry"))
         self.show_upnext(liked_ids)
+        self.show_playlists(store, liked_ids)
         for kind, rows in (
             ("recent", store.recent_seeds(10)),
             ("history", store.recent_plays(30)),
@@ -387,6 +419,37 @@ class MusicApp(App):
         if lst.highlighted is not None and rows[lst.highlighted] is None:
             lst.highlighted = next((i for i, row in enumerate(rows) if row), None)
 
+    def show_playlists(self, store: Store, liked_ids: set[str]) -> None:
+        """Your playlists, or the tracks of the one open."""
+        lst = self.track_list("playlists")
+        keep = lst.rows[lst.highlighted] if lst.highlighted is not None and lst.rows else None
+        playlists = store.playlists()
+        playlist = next((p for p in playlists if p.name == self.playlist_open), None)
+        if playlist is None:
+            self.playlist_open = None
+            rows: list[Any] = [NEW_PLAYLIST, *playlists]
+            lines: list[Any] = [Text(NEW_PLAYLIST, style="italic")]
+            lines += [playlist_line(p) for p in playlists]
+            lst.show(rows, lines, row_key(keep), key=row_key)
+            return
+        rows = [None, *playlist.tracks]
+        lines = [heading(f"{playlist.name}  (← back)")]
+        lines += [("♥ " if t.id in liked_ids else "") + t.title for t in playlist.tracks]
+        if not playlist.tracks:
+            rows.append(None)
+            lines.append(Text("empty: S on a track in any list adds it here", style="dim"))
+        lst.show(rows, lines, row_key(keep), key=row_key)
+        if lst.highlighted is not None and rows[lst.highlighted] is None:
+            lst.highlighted = next((i for i, row in enumerate(rows) if row), None)
+
+    def open_playlist(self, name: str | None) -> None:
+        self.playlist_open = name
+        lst = self.track_list("playlists")
+        lst.rows = []  # a fresh cursor
+        lst.highlighted = None
+        self.refresh_lists()
+        self.show_keys()
+
     def active_list(self) -> TrackList:
         focused = self.focused
         if isinstance(focused, TrackList):
@@ -403,6 +466,10 @@ class MusicApp(App):
     def on_descendant_focus(self) -> None:
         self.show_keys()
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # a dialog is open: its keys only, nothing happens behind it
+        return not isinstance(self.screen, ModalScreen)
+
     def show_keys(self) -> None:
         """Two lines of keys: the player's, then the focused list's (or the input's)."""
         focused = self.focused
@@ -410,6 +477,8 @@ class MusicApp(App):
             context = INPUT_KEYS
         else:
             kind = focused.kind if isinstance(focused, TrackList) else "radio"
+            if kind == "playlists" and self.playlist_open is not None:
+                kind = "playlist"
             context = LIST_KEYS.get(kind, []) + APP_KEYS
         self.query_one("#keys", Static).update(key_line(PLAYER_KEYS) + "\n" + key_line(context))
 
@@ -429,14 +498,35 @@ class MusicApp(App):
         if row is None:  # a heading
             return
         match lst.kind, key:
+            case "playlists", "enter" if row == NEW_PLAYLIST:
+                self.push_screen(Ask("name of the new playlist"), self.create_playlist)
+            case "playlists", "enter" if isinstance(row, Playlist):
+                self.run_worker(self.play_collection(row), group="launch", exclusive=True)
+            case "playlists", "right" if isinstance(row, Playlist):
+                self.open_playlist(row.name)
+            case "playlists", "delete" if isinstance(row, Playlist):
+                self.push_screen(
+                    Confirm(f"delete the playlist «{row.name}»?"),
+                    lambda yes: yes and self.delete_playlist(row.name),
+                )
+            case "playlists", "left" if self.playlist_open is not None:
+                self.open_playlist(None)
+            case "playlists", "enter" | "right" if isinstance(row, Track):
+                tracks = [r for r in lst.rows[i:] if isinstance(r, Track)]
+                self.launch(row.id, row.title, queue=tracks, then_radio=True, source=PLAYLIST)
+            case "playlists", "delete" if isinstance(row, Track) and self.playlist_open:
+                Store().remove_from_playlist(self.playlist_open, row.id)
+                self.refresh_lists()
+            case "playlists", _:
+                pass  # "+ new playlist" has nothing else
             case "upnext", "enter" | "right":
                 self.run_worker(self.queue_message(PLAY_MESSAGE, str(row["entry"])))
             case "upnext", "delete":
                 self.run_worker(self.queue_message(REMOVE_MESSAGE, str(row["entry"])))
             case "search", "left":
                 self.search_go_back()
-            case "search", "enter" if row.kind == music.ALBUMS:
-                self.run_worker(self.play_album(row), group="launch", exclusive=True)
+            case "search", "enter" if row.kind in COLLECTIONS:
+                self.run_worker(self.play_collection(row), group="launch", exclusive=True)
             case "search", "enter" | "right" if row.kind in PAGES:
                 self.run_worker(self.open_page(row), group="search", exclusive=True)
             case "search", "enter" | "right" if row.kind == music.RADIO:
@@ -475,24 +565,41 @@ class MusicApp(App):
                     move = (MOVE_MESSAGE, str(row["entry"]), "before", str(first["entry"]))
                     self.run_worker(self.queue_message(*move))
             return
-        if isinstance(row, music.Result) and row.kind not in (music.SONGS, music.ALBUMS):
+        if row == NEW_PLAYLIST:
             return
         self.run_worker(self.enqueue(row, where))
 
-    async def enqueue(self, row: Any, where: str) -> None:
-        if isinstance(row, music.Result) and row.kind == music.ALBUMS:
+    async def row_tracks(self, row: Any) -> tuple[str, list[Track], str] | None:
+        """The tracks behind a row: the track itself, or an album's or a playlist's. Returns
+        (label, tracks, the source they play as); None if there are none."""
+        if isinstance(row, music.Result) and row.kind in COLLECTIONS:
+            fetch, source = COLLECTIONS[row.kind]
             try:
-                label, tracks = await asyncio.to_thread(music.album, row.id)
+                label, tracks = await asyncio.to_thread(getattr(music, fetch), row.id)
             except Exception:
                 self.notify(f"could not open {row.title}", severity="error")
-                return
-            label = label or row.title
+                return None
+            found = (label or row.title, tracks, source)
+        elif isinstance(row, Playlist):
+            found = (row.name, row.tracks, PLAYLIST)
+        elif isinstance(row, music.Result) and row.kind != music.SONGS:
+            return None  # an artist, a radio, a "more" link
+        elif row_id(row):
+            found = (row_title(row), [Track(row_id(row), row_title(row))], RADIO_MIX)
         else:
-            label, tracks = row_title(row), [Track(row_id(row), row_title(row))]
-        if not tracks or not tracks[0].id:
+            return None
+        if not found[1]:
+            self.notify(f"nothing playable in {found[0]}")
+            return None
+        return found
+
+    async def enqueue(self, row: Any, where: str) -> None:
+        found = await self.row_tracks(row)
+        if not found:
             return
+        label, tracks, source = found
         try:
-            queued = await control.enqueue(tracks, where, source=ALBUM)
+            queued = await control.enqueue(tracks, where, source=source)
         except Failure as e:
             self.notify(str(e), severity="error")
             return
@@ -500,6 +607,80 @@ class MusicApp(App):
             self.notify(("next: " if where == PLAY_NEXT else "queued: ") + label, timeout=3)
         else:
             self.action_tab("radio")
+
+    async def play_collection(self, row: Any) -> None:
+        """An album or a playlist: in order, then a radio from its last track."""
+        name = row.name if isinstance(row, Playlist) else row_title(row)
+        self.notify(f"starting {name}…", timeout=3)
+        found = await self.row_tracks(row)
+        if not found:
+            return
+        _, tracks, source = found
+        try:
+            await control.start(tracks[0].id, queue=tracks, then_radio=True, source=source)
+        except Failure as e:
+            self.notify(str(e), severity="error")
+            return
+        self.action_tab("radio")
+
+    # --- playlists ---
+
+    def action_save(self) -> None:
+        """S: save the row's track (an album's, a playlist's tracks) to one of your playlists;
+        outside the lists, the track that's playing."""
+        lst = self.focused
+        row: Any = None
+        if isinstance(lst, TrackList) and lst.highlighted is not None and lst.rows:
+            row = lst.rows[lst.highlighted]
+        if (
+            row is None
+            or row == NEW_PLAYLIST
+            or (isinstance(lst, TrackList) and lst.kind == "lyrics")
+        ):
+            row = self.current()
+        if not row:
+            return
+        self.run_worker(self.save(row))
+
+    async def save(self, row: Any) -> None:
+        found = await self.row_tracks(row)
+        if not found:
+            return
+        label, tracks, _ = found
+        names = [p.name for p in Store().playlists()]
+
+        def picked(choice: tuple[str, bool] | None) -> None:
+            if not choice:
+                return
+            name, new = choice
+            store = Store()
+            try:
+                if new:
+                    store.create_playlist(name)
+                added = store.add_to_playlist(name, tracks)
+            except PlaylistError as e:
+                self.notify(str(e), severity="error")
+                return
+            self.notify(f"{label} → {name}" if added else f"already in {name}", timeout=3)
+            self.refresh_lists()
+
+        self.push_screen(Pick(f"save {label} to", names), picked)
+
+    def create_playlist(self, name: str | None) -> None:
+        if not name:
+            return
+        try:
+            Store().create_playlist(name)
+        except PlaylistError as e:
+            self.notify(str(e), severity="error")
+            return
+        self.refresh_lists()
+
+    def delete_playlist(self, name: str) -> None:
+        with contextlib.suppress(PlaylistError):
+            Store().delete_playlist(name)
+        self.notify(f"deleted {name}", timeout=3)
+        self.refresh_lists()
 
     async def queue_message(self, *args: str) -> None:
         if not self.mpv:
@@ -509,9 +690,17 @@ class MusicApp(App):
             await control.message(*args)
 
     def action_move(self, step: int) -> None:
-        """shift+↑ / shift+↓ in up next."""
+        """shift+↑ / shift+↓ in up next and in a playlist."""
         lst = self.focused
-        if not isinstance(lst, TrackList) or lst.kind != "upnext" or lst.highlighted is None:
+        if not isinstance(lst, TrackList) or lst.highlighted is None or not lst.rows:
+            return
+        if lst.kind == "playlists" and self.playlist_open is not None:
+            row = lst.rows[lst.highlighted]
+            if isinstance(row, Track):
+                Store().move_in_playlist(self.playlist_open, row.id, step)
+                self.refresh_lists()
+            return
+        if lst.kind != "upnext":
             return
         row = lst.rows[lst.highlighted]
         if row is None:
@@ -627,6 +816,8 @@ class MusicApp(App):
             self.active_list().focus()
         elif self.focused is self.track_list("search") and self.search_back:
             self.search_go_back()
+        elif self.focused is self.track_list("playlists") and self.playlist_open is not None:
+            self.open_playlist(None)
         else:
             self.exit()
 
@@ -735,6 +926,7 @@ class MusicApp(App):
             ("Songs", found.songs),
             ("Albums", found.albums),
             ("Artists", found.artists),
+            ("Playlists", found.playlists),
         ):
             if results:
                 if rows:
@@ -754,6 +946,7 @@ class MusicApp(App):
         loaders: dict[str, Any] = {
             music.ARTISTS: lambda: music.artist(row.id),
             music.ALBUMS: lambda: music.album_page(row.id),
+            music.PLAYLISTS: lambda: music.playlist_page(row.id),
             music.MORE_SONGS: lambda: music.artist_songs(row.id, name),
             music.MORE_ALBUMS: lambda: music.artist_albums(
                 row.id, row.params, name, row.title.removeprefix("all ")
@@ -813,24 +1006,6 @@ class MusicApp(App):
             return
         try:
             await control.start(tracks[0].id, queue=tracks, then_radio=True, source=ARTIST_RADIO)
-        except Failure as e:
-            self.notify(str(e), severity="error")
-            return
-        self.action_tab("radio")
-
-    async def play_album(self, album: music.Result) -> None:
-        """The album in order, then a radio from its last track."""
-        self.notify(f"starting {album.title}…", timeout=3)
-        try:
-            title, tracks = await asyncio.to_thread(music.album, album.id)
-        except Exception:
-            self.notify(f"could not open {album.title}", severity="error")
-            return
-        if not tracks:
-            self.notify(f"nothing playable on {album.title}")
-            return
-        try:
-            await control.start(tracks[0].id, queue=tracks, then_radio=True, source=ALBUM)
         except Failure as e:
             self.notify(str(e), severity="error")
             return

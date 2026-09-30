@@ -14,9 +14,12 @@ from typing import Any
 
 from .models import Track
 from .radio import ALBUM as ALBUM_SOURCE
+from .radio import PLAYLIST as PLAYLIST_SOURCE
 from .youtube import display_title, is_video_id
 
-SONGS, ALBUMS, ARTISTS = "song", "album", "artist"
+PLAYLIST_LIMIT = 200  # tracks read from a playlist
+
+SONGS, ALBUMS, ARTISTS, PLAYLISTS = "song", "album", "artist", "playlist"
 RADIO = "radio"  # an artist's radio: id is its playlist id
 MORE_SONGS = "more songs"  # all of an artist's songs: id is the playlist's browse id
 MORE_ALBUMS = "more albums"  # all albums or singles: id is the channel id, with params
@@ -24,8 +27,9 @@ MORE_ALBUMS = "more albums"  # all albums or singles: id is the channel id, with
 
 @dataclass(frozen=True)
 class Result:
-    kind: str  # SONGS, ALBUMS, ARTISTS; RADIO, MORE_SONGS, MORE_ALBUMS on an artist's page
-    id: str  # video id, album browse id or artist channel id
+    # SONGS, ALBUMS, ARTISTS, PLAYLISTS; RADIO, MORE_SONGS, MORE_ALBUMS on an artist's page
+    kind: str
+    id: str  # video id, album / playlist browse id or artist channel id
     title: str  # "Artist — Title" for songs and albums, the name for artists
     detail: str = ""  # duration of a song, "Album · 1995" of an album
     params: str = ""  # what ytmusicapi needs besides the id (MORE_ALBUMS)
@@ -62,6 +66,7 @@ class Found:
     songs: list[Result] = field(default_factory=list)
     albums: list[Result] = field(default_factory=list)
     artists: list[Result] = field(default_factory=list)
+    playlists: list[Result] = field(default_factory=list)
 
 
 def _client() -> Any:
@@ -103,13 +108,22 @@ def _artist(item: dict) -> Result | None:
     return Result(ARTISTS, browse_id, name, f"{subscribers} subscribers" if subscribers else "")
 
 
+def _playlist(item: dict) -> Result | None:
+    browse_id = item.get("browseId") or (item.get("playlistId") and "VL" + item["playlistId"])
+    if not browse_id or not item.get("title"):
+        return None
+    count = item.get("itemCount")
+    detail = [item.get("author"), count is not None and f"{count} songs"]
+    return Result(PLAYLISTS, browse_id, item["title"], " · ".join(str(x) for x in detail if x))
+
+
 def _parsed(items: Any, parse: Any, *args: Any) -> list[Result]:
     return [r for r in (parse(item, *args) for item in items or [] if isinstance(item, dict)) if r]
 
 
 def search(query: str, limit: int = 8) -> Found:
-    """Songs, albums and artists for a query: three requests at once."""
-    kinds = (("songs", _song), ("albums", _album), ("artists", _artist))
+    """Songs, albums, artists and playlists for a query: four requests at once."""
+    kinds = (("songs", _song), ("albums", _album), ("artists", _artist), ("playlists", _playlist))
 
     def one(name: str) -> list:
         # a client per thread: its requests session is not meant to be shared
@@ -204,9 +218,28 @@ def artist(browse_id: str) -> Page:
     return page
 
 
+def playlist_page(browse_id: str) -> Page:
+    """A YouTube Music playlist: its tracks."""
+    data = _client().get_playlist(browse_id, limit=PLAYLIST_LIMIT)
+    songs = _parsed(data.get("tracks"), _song)
+    author = data.get("author")
+    author = author.get("name") if isinstance(author, dict) else author
+    count = data.get("trackCount")
+    detail = [author, count is not None and f"{count} songs", data.get("duration")]
+    title = data.get("title") or "playlist"
+    detail_line = " · ".join(str(x) for x in detail if x)
+    return Page(title, detail_line, [Section("", songs, numbered=True)], plays_as=PLAYLIST_SOURCE)
+
+
+def playlist(browse_id: str) -> tuple[str, list[Track]]:
+    """A YouTube Music playlist's title and its playable tracks."""
+    page = playlist_page(browse_id)
+    return page.title, tracks(page.sections[0].results)
+
+
 def artist_songs(browse_id: str, name: str) -> Page:
     """All of an artist's songs (MORE_SONGS): a playlist."""
-    data = _client().get_playlist(browse_id, limit=200)
+    data = _client().get_playlist(browse_id, limit=PLAYLIST_LIMIT)
     songs = _parsed(data.get("tracks"), _song, name)
     return Page(f"{name}: songs", f"{len(songs)} songs", [Section("", songs)], plays_as="songs")
 

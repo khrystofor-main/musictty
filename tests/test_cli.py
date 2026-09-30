@@ -1,7 +1,7 @@
 import pytest
 from fakes import tid
 
-from musictty import cli, player
+from musictty import cli, control, player
 from musictty.cli import Call, Invalid, list_lines, parse
 from musictty.models import Track
 from musictty.store import Settings, Store
@@ -48,6 +48,12 @@ S, A, B = (tid(n) for n in range(3))
         (["history", "next", "2"], Call("history", number=2, action="next")),
         (["liked", "queue", "3"], Call("liked", number=3, action="queue")),
         (["liked", "next", "1"], Call("liked", number=1, action="next")),
+        (["playlists"], Call("playlists")),
+        (["playlists", "2"], Call("playlists", number=2)),
+        (["playlists", "play", "1"], Call("playlists", number=1, action="play")),
+        (["playlists", "add", "1"], Call("playlists", number=1, action="add")),
+        (["playlists", "delete", "3"], Call("playlists", number=3, action="delete")),
+        (["playlists", "new", "Road", "trip"], Call("playlists", text="Road trip", action="new")),
         (["import-v0"], Call("import-v0")),
         (["import-v0", "C:\\music"], Call("import-v0", text="C:\\music")),
     ],
@@ -80,6 +86,9 @@ def test_parse(argv, call):
         ["seek", "ten"],
         ["seek", "1.5"],
         ["liked", "play"],
+        ["playlists", "new"],
+        ["playlists", "remove", "1"],
+        ["playlists", "play"],
         ["liked", "shuffle", "1"],
     ],
 )
@@ -193,3 +202,30 @@ def test_import_v0(tmp_path, capsys):
     assert capsys.readouterr().out == "imported: 0 radios, 0 plays, 1 liked\n"
     assert cli.main(["import-v0", str(v0)]) == 1
     assert capsys.readouterr().out == "already imported\n"
+
+
+def test_playlists(capsys, monkeypatch):
+    started = []
+
+    async def fake_start(seed=None, **kwargs):
+        started.append((seed, kwargs))
+
+    monkeypatch.setattr(control, "start", fake_start)
+    assert cli.main(["playlists", "new", "Road", "trip"]) == 0
+    assert cli.main(["playlists", "new", "road  trip"]) == 1  # taken
+    assert cli.main(["playlists", "new", "Empty"]) == 0
+    Store().add_to_playlist("Road trip", [Track(S, "s"), Track(A, "a")])
+    assert capsys.readouterr().out == "made Road trip\n«road trip» already exists\nmade Empty\n"
+    assert cli.main(["playlists"]) == 0
+    assert capsys.readouterr().out == " 1. Road trip (2)\n 2. Empty (0)\n"
+    assert cli.main(["playlists", "1"]) == 0
+    assert capsys.readouterr().out == " 1. s\n 2. a\n"
+    assert cli.main(["playlists", "play", "1"]) == 0
+    assert cli.main(["playlists", "play", "2"]) == 1
+    assert capsys.readouterr().out == "Empty is empty\n"
+    assert cli.main(["playlists", "add", "1"]) == 1  # nothing is playing: quietly
+    assert cli.main(["playlists", "delete", "2"]) == 0
+    assert capsys.readouterr().out == "deleted Empty\n"
+    assert [p.name for p in Store().playlists()] == ["Road trip"]
+    queue = [Track(S, "s"), Track(A, "a")]
+    assert started == [(S, {"queue": queue, "then_radio": True, "source": "playlist"})]

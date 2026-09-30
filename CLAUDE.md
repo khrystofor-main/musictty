@@ -37,7 +37,9 @@ in the user runtime dir elsewhere). Its clients:
   artists (`music.py`); an album plays as a queue that turns into a radio
   (`LaunchSpec.then_radio`: no mixes until it has played out, then a normal radio). Artists
   and albums open as pages (`music.Page`: a title, a detail line, sections of `Result`s) in
-  the same tab, stacked in `search_back` for ←. The
+  the same tab, stacked in `search_back` for ←. The Playlists tab lists your playlists (or
+  the one open); `S` saves any row's tracks to one through `dialogs.Pick`. Modal dialogs
+  (a name, a pick, yes/no) are in `dialogs.py`. The
   Lyrics tab loads the playing track's lyrics (`music.lyrics`, cached) while it is open and
   highlights the sung line from the polled time-pos. The Up next tab shows
   `user-data/musictty/upnext`; `e`/`E` in any list queue a track (control.enqueue). The key
@@ -65,7 +67,8 @@ the daemon), `youtube.py` (yt-dlp as a library; blocking, run in a thread),
 `store.py` (data files, v0 import), `paths.py`, `mpv.conf`.
 
 Data in the user data dir (platformdirs), same `date<TAB>id<TAB>title` lines as v0:
-`seeds.tsv`, `plays.tsv`, `liked.tsv`, `settings.json` (volume, repeat), `radio.log`
+`seeds.tsv`, `plays.tsv`, `liked.tsv`, `settings.json` (volume, repeat), `playlists.json`
+(your playlists: names and `[id, title]` tracks), `radio.log`
 (the daemons' log: appended, never truncated under a still-running old daemon; past 512 KB
 it moves to `radio.log.1`). The radio publishes its pid in `user-data/musictty/pid` for
 `musictty mem` (memory of mpv and of the radio process). `musictty import-v0` merges v0's files.

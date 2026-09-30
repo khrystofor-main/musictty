@@ -57,6 +57,7 @@ LIKED_PLAYLIST = "liked playlist"
 ALBUM = "album"
 AI_RADIO = "ai radio"
 ARTIST_RADIO = "artist radio"
+PLAYLIST = "playlist"
 
 
 @dataclass
