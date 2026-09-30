@@ -60,8 +60,8 @@ back.
 **Home** (tab `9`) is YouTube Music's Home and Explore, as it shows them without an account:
 its rows (quick picks, mixes and the like), then new releases, trending songs, the charts and
 their top artists, moods and genres (`→` on one lists its playlists). It opens like the
-search: `enter` plays, `→` opens, `←` goes back. The charts are global; `MUSICTTY_CHARTS=DE` (any
-country code) picks a country's.
+search: `enter` plays, `→` opens, `←` goes back. The charts are global;
+`MUSICTTY_CHARTS=DE` (any country code) picks a country's.
 
 **Playlists** (tab `8`) are your own, kept on your machine: `+ new playlist` makes one, `S`
 on any track adds it, `enter` plays one (then a radio goes on), `→` opens it to reorder
