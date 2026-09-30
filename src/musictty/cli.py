@@ -54,7 +54,8 @@ musictty — endless music radio in the terminal
   musictty ai <mood>           the ai picks songs for a mood, then the radio goes on
                                (key in DEEPSEEK_API_KEY or NOUS_API_KEY)
 
-  musictty                     the player: now playing, radios, history, liked, search
+  musictty                     the player: now playing, radios, history, liked, search,
+                               lyrics, up next, playlists, home
   musictty recent              recent radios
   musictty <n>                 start recent radio n again
 
@@ -86,6 +87,10 @@ musictty — endless music radio in the terminal
 
   musictty like                like the current track
   musictty unlike              remove the current track from liked
+  musictty dislike             skip the current track, and never play it on a radio again
+  musictty disliked            disliked tracks
+  musictty disliked remove <n>
+                               take track n off the disliked list
   musictty now                 what's playing and from where (radio mix or playlist)
   musictty next                next track
   musictty prev                previous track
@@ -131,6 +136,8 @@ SIMPLE = {
     "shuffle",
     "playlists",
     "quality",
+    "dislike",
+    "disliked",
 }
 QUEUE_ACTIONS = {PLAY_NEXT, ADD_TO_QUEUE}
 LIST_ACTIONS = {
@@ -139,6 +146,7 @@ LIST_ACTIONS = {
     "liked": {"play", "repeat", "remove", *QUEUE_ACTIONS},
     "upnext": {"remove"},
     "playlists": {"play", "add", "delete"},
+    "disliked": {"remove"},
 }
 LINK = re.compile(r"https?://([\w-]+\.)*(youtube\.com|youtu\.be)/", re.ASCII)
 NUMBER = re.compile(r"[1-9][0-9]{0,3}")
@@ -312,6 +320,27 @@ def cmd_like(call: Call) -> int | None:
         Store().unlike(track.id)
         print(f"♡ {track.title}")
     return None
+
+
+def cmd_dislike(call: Call) -> int | None:
+    cur = on_player(control.current_track)
+    if not cur or not cur.get("id"):
+        return 1
+    track = Track(cur["id"], cur.get("title") or cur["id"])
+    asyncio.run(control.dislike(track))
+    print(f"✕ {track.title}")
+    return None
+
+
+def cmd_disliked(call: Call) -> None:
+    store = Store()
+    items = store.disliked()
+    if call.number is None:
+        print_numbered([t.title for t in items])
+        return
+    track = pick(items, call.number)
+    store.undislike(track.id)
+    print(f"not disliked any more: {track.title}")
 
 
 def cmd_list(call: Call) -> int | None:
@@ -519,6 +548,8 @@ COMMANDS: dict[str, Callable[[Call], int | None]] = {
     "ai": cmd_ai,
     "now": cmd_now,
     "like": cmd_like,
+    "dislike": cmd_dislike,
+    "disliked": cmd_disliked,
     "unlike": cmd_like,
     "list": cmd_list,
     "history": cmd_history,

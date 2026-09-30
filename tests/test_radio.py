@@ -584,6 +584,26 @@ def test_audio_quality(store):
     assert mpv.props["ytdl-format"] == "bestaudio/best"
 
 
+def test_disliked_tracks_are_never_picked_and_skipped(store):
+    store.dislike(Track(B, "b"))
+    source = FakeSource({S: [S, A, B, C, D, E]})
+
+    async def scenario():
+        mpv, radio = await started(LaunchSpec(seed=S, stream=source.stream(S)), source, store)
+        assert upnext(radio, mpv) == [A, C, D, E]  # B was disliked before
+        await load(mpv, radio, 0)
+        await message(radio, *add("queue", D))  # asked for: it stays
+        assert upnext(radio, mpv) == [D, A, C, D, E]
+        await message(radio, "musictty-dislike", D)
+        assert upnext(radio, mpv) == [D, A, C, E]  # the radio's D is gone
+        await message(radio, "musictty-dislike", S)  # the playing one: skipped
+        return mpv, radio
+
+    mpv, radio = run(scenario())
+    assert radio.video_id(mpv.entries[mpv.pos]["filename"]) == D
+    assert {B, D, S} <= radio.seen
+
+
 def test_a_new_radio_keeps_the_sleep_timer(store):
     source = FakeSource({S: [S, A]})
 

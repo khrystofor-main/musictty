@@ -9,7 +9,8 @@ songs, and never stops until you tell it to. Windows, macOS and Linux.
 - **Radio from anything:** a search query, a track link, an album, or a mood for the AI
 - **Runs in the background:** a hidden `mpv` process; the player UI and the commands
   are just remotes, and closing them leaves the music playing
-- **History and likes:** every track you've played, and ♥ tracks as a looping playlist
+- **History and likes:** every track you've played, ♥ tracks as a looping playlist, and
+  dislikes the radio never picks again
 - **Lyrics:** synced with the song when YouTube Music has them timed
 - **Low footprint:** audio only, tiny buffers, no windows
 
@@ -32,10 +33,11 @@ history, liked tracks, search, lyrics, what's up next, your playlists and YouTub
 Home and Explore. The bar at the bottom shows the keys: the player's, then those of the list
 you're in (a narrow terminal gets another line or two).
 
-Keys: `space` pause, `n`/`p` next and previous, `+`/`-` volume, `,`/`.` seek 10 seconds
-back and forward, `l` like, `r` repeat the track, `R` repeat the whole queue, `x` shuffle
-what's up next, `s` stop, `z` sleep timer, `Q` audio quality, `/` search, `a` AI radio,
-`1`–`9` tabs, `q` quit (the music keeps playing).
+Keys: `space` pause, `n`/`p` next and previous, `+`/`-` volume, `,`/`.` seek 10 seconds back
+and forward, `l` like, `d` dislike (the track is skipped and no radio picks it again), `r`
+repeat the track, `R` repeat the whole queue, `x` shuffle what's up next, `s` stop, `z`
+sleep timer, `Q` audio quality, `/` search, `a` AI radio, `1`–`9` tabs, `q` quit (the music
+keeps playing).
 
 In the lists, `enter` starts a radio from a track, `e` adds it to the queue, `E` plays it
 next, `S` saves it to one of your playlists (an album or a playlist from the search goes in
@@ -103,7 +105,7 @@ musictty liked play 2         # liked tracks in a loop, from the second one down
 musictty playlists            # your playlists; `playlists play 1`, `playlists add 1`
 musictty seek +30 | shuffle | repeat all on
 musictty sleep 30 | sleep end | sleep off | quality low
-musictty next | prev | pause | play | stop | like | mem
+musictty next | prev | pause | play | stop | like | dislike | mem
 ```
 
 Run `musictty help` for the full list.

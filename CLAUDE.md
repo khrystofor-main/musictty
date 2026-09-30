@@ -75,7 +75,7 @@ the daemon), `youtube.py` (yt-dlp as a library; blocking, run in a thread),
 
 Data in the user data dir (platformdirs), same `date<TAB>id<TAB>title` lines as v0:
 `seeds.tsv`, `plays.tsv`, `liked.tsv`, `settings.json` (volume, repeat, quality), `playlists.json`
-(your playlists: names and `[id, title]` tracks), `radio.log`
+(your playlists: names and `[id, title]` tracks), `disliked.tsv` (never picked by a radio), `radio.log`
 (the daemons' log: appended, never truncated under a still-running old daemon; past 512 KB
 it moves to `radio.log.1`). The radio publishes its pid in `user-data/musictty/pid` for
 `musictty mem` (memory of mpv and of the radio process). `musictty import-v0` merges v0's files.

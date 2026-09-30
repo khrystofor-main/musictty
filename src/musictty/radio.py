@@ -57,6 +57,7 @@ SLEEP_END = "end"  # stop after the track that's playing
 # "" (no timer), SLEEP_END, or the time the radio stops (seconds since the epoch)
 SLEEP_PROPERTY = "user-data/musictty/sleep"
 FADE_SECONDS = 30.0  # the sleep timer turns the volume down over the last half minute
+DISLIKE_MESSAGE = "musictty-dislike"  # a video id: skip it, never pick it again
 QUALITY_MESSAGE = "musictty-quality"  # one of youtube.QUALITIES, for the tracks to come
 PLAY_NEXT, ADD_TO_QUEUE = "next", "queue"
 
@@ -154,7 +155,8 @@ class Radio:
         # the queue proper, as opposed to the radio's own tracks: the entries of a playlist or
         # an album and the ones the user added, until they play. "Add to queue" goes after them
         self.queued: set[int] = set()
-        self.seen: set[str] = set()  # tracks that were queued or played: never queue them again
+        # tracks that were queued or played, and the disliked ones: never queue them again
+        self.seen: set[str] = set(self.store.disliked_ids())
         self.fetching = False
         self.direct_id: dict[str, str] = {}  # direct stream URL -> track id
         self.resolving: set[str] = set()
@@ -504,6 +506,8 @@ class Radio:
                 await self.shuffle()
             case [name, when] if name == SLEEP_MESSAGE:
                 await self.set_sleep(when)
+            case [name, video_id] if name == DISLIKE_MESSAGE:
+                await self.dislike(video_id)
             case [name, quality] if name == QUALITY_MESSAGE and quality in youtube.FORMATS:
                 self.format = youtube.FORMATS[quality]
                 await self.mpv.set("ytdl-format", self.format)
@@ -612,6 +616,27 @@ class Radio:
                     ids.insert(k, ids.pop(i))
             self.queued.clear()  # the shuffled queue is one queue now
         log.info("shuffled %d tracks", len(upcoming))
+        await self.after_edit()
+
+    async def dislike(self, video_id: str) -> None:
+        """Skip the track if it's playing, and take it out of the radio's picks ahead; the
+        mixes won't bring it back. What the user queued stays: they asked for it."""
+        self.seen.add(video_id)
+        async with self.edit:
+            playlist = await self.playlist()
+            pos = _current(playlist)
+            if pos is None:
+                return
+            for i in reversed(range(pos + 1, len(playlist))):
+                entry = playlist[i]
+                gone = self.video_id(entry.get("filename")) == video_id
+                if gone and entry.get("id") not in self.queued:
+                    await self.mpv.command("playlist-remove", str(i))
+                    self.forget(entry, playlist[:i] + playlist[i + 1 :])
+            skip = self.video_id(playlist[pos].get("filename")) == video_id
+        log.info("disliked %s", video_id)
+        if skip:
+            await self.mpv.command("playlist-next", "force")
         await self.after_edit()
 
     async def carry_sleep(self, value: str) -> None:

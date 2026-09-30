@@ -401,6 +401,10 @@ def test_the_queue_with_a_real_player(tmp_path, monkeypatch):
             else:
                 raise AssertionError("the radio kept its audio quality")
 
+            await pilot.press("d")  # never again: A is skipped
+            await until(pilot, lambda: playing() not in (None, A))
+            assert store.disliked_ids() == {A}
+
             await pilot.press("s")
             await asyncio.wait_for(task, 5)
             await pilot.press("q")

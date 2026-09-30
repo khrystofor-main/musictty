@@ -163,3 +163,16 @@ def test_quality_setting(isolated):
     assert store.settings() == Settings(quality="high")
     store.path(SETTINGS).write_text('{"volume": 50, "quality": "ultra"}', encoding="utf-8")
     assert store.settings() == Settings(volume=50)  # an unknown quality is the default
+
+
+def test_dislikes(isolated):
+    store = Store()
+    store.like(A)
+    store.dislike(A)
+    store.dislike(B)
+    store.dislike(A)  # once
+    assert store.liked() == []  # a disliked track is no longer liked
+    assert store.disliked() == [B, A]  # the latest first
+    assert store.disliked_ids() == {A.id, B.id}
+    assert store.undislike(A.id) and not store.undislike(A.id)
+    assert store.disliked() == [B]

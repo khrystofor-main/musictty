@@ -16,6 +16,7 @@ from .models import Track
 from .radio import (
     ADD_MESSAGE,
     AI_RADIO,
+    DISLIKE_MESSAGE,
     LIKED_PLAYLIST,
     LIST_PROPERTY,
     QUALITY_MESSAGE,
@@ -178,6 +179,13 @@ async def message(*args: str) -> None:
 async def set_repeat_all(on: bool) -> None:
     """Repeat the whole queue. Only for the playing one: a new radio starts without it."""
     await with_player(lambda mpv: mpv.set("loop-playlist", "inf" if on else "no"))
+
+
+async def dislike(track: Track) -> None:
+    """Never again: remember it, and have the playing radio skip it and drop it."""
+    Store().dislike(track)
+    with contextlib.suppress(NotRunning):
+        await message(DISLIKE_MESSAGE, track.id)
 
 
 async def set_sleep(when: str) -> None:

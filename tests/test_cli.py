@@ -53,6 +53,9 @@ S, A, B = (tid(n) for n in range(3))
         (["sleep", "off"], Call("sleep", text="off")),
         (["quality"], Call("quality")),
         (["quality", "low"], Call("quality", text="low")),
+        (["dislike"], Call("dislike")),
+        (["disliked"], Call("disliked")),
+        (["disliked", "remove", "2"], Call("disliked", number=2, action="remove")),
         (["playlists"], Call("playlists")),
         (["playlists", "2"], Call("playlists", number=2)),
         (["playlists", "play", "1"], Call("playlists", number=1, action="play")),
@@ -95,6 +98,8 @@ def test_parse(argv, call):
         ["sleep", "0"],
         ["sleep", "soon"],
         ["quality", "ultra"],
+        ["disliked", "play", "1"],
+        ["dislike", "1"],
         ["playlists", "new"],
         ["playlists", "remove", "1"],
         ["playlists", "play"],
@@ -255,3 +260,14 @@ def test_sleep_text():
     assert control.sleep_text("end", 100) == "sleep after this track"
     assert control.sleep_text("1000.5", 100) == "sleep 15:00"
     assert control.sleep_text("50", 100) == ""  # over
+
+
+def test_disliked_list(capsys):
+    store = Store()
+    store.dislike(Track(S, "s"))
+    store.dislike(Track(A, "a"))
+    assert cli.main(["disliked"]) == 0
+    assert cli.main(["disliked", "remove", "1"]) == 0
+    assert capsys.readouterr().out == " 1. a\n 2. s\nnot disliked any more: a\n"
+    assert store.disliked_ids() == {S}
+    assert cli.main(["dislike"]) == 1  # nothing is playing: quietly
