@@ -47,7 +47,7 @@ in the user runtime dir elsewhere). Its clients:
   highlights the sung line from the polled time-pos. The Up next tab shows
   `user-data/musictty/upnext`; `e`/`E` in any list queue a track (control.enqueue). The key
   bar at the bottom is a Static built from PLAYER_KEYS / LIST_KEYS (Textual's Footer is one
-  line and didn't fit): new keys go there too.
+  line and didn't fit), wrapped by hand between the hints: new keys go there too.
 - `daemon.py` + `radio.py` — the background process (`python -m musictty.daemon`, a
   `LaunchSpec` as JSON on stdin). It starts mpv, and `Radio` is the port of
   `youtube-music.lua`: refills from the mix, prefetches the next track to a direct

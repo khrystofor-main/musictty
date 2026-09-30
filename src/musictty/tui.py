@@ -11,6 +11,7 @@ import contextlib
 import time
 from typing import Any
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
@@ -225,7 +226,7 @@ PLAYER_KEYS = [
     ("x", "shuffle"),
     ("s", "stop"),
 ]
-QUEUE_KEYS = [("e/E", "queue/next"), ("S", "save")]
+QUEUE_KEYS = [("e/E", "queue/next"), ("S", "save"), ("g", "go to")]
 LIST_KEYS = {
     "radio": [("enter", "radio"), ("←", "jump back"), *QUEUE_KEYS],
     "recent": [("enter", "radio"), *QUEUE_KEYS],
@@ -262,8 +263,18 @@ SUGGESTION_KEYS = [("enter", "search this"), ("esc", "back to typing")]
 SUGGEST_AFTER = 0.25  # seconds of no typing before suggestions are asked for
 
 
-def key_line(keys: list[tuple[str, str]]) -> str:
-    return "  ".join(f"[b $footer-key-foreground]{key}[/] {desc}" for key, desc in keys)
+def key_lines(keys: list[tuple[str, str]], width: int) -> list[str]:
+    """Keys and what they do, as many to a line as fit: a line breaks between them only."""
+    lines: list[list[str]] = [[]]
+    used = 0
+    for key, desc in keys:
+        size = cell_len(f"{key} {desc}")
+        if lines[-1] and used + 2 + size > width:
+            lines.append([])
+            used = 0
+        used += size + (2 if lines[-1] else 0)
+        lines[-1].append(f"[b $footer-key-foreground]{key}[/] {desc}")
+    return ["  ".join(line) for line in lines]
 
 
 class MusicApp(App):
@@ -298,6 +309,7 @@ class MusicApp(App):
         Binding("E,shift+e", f"enqueue('{PLAY_NEXT}')", "play next", key_display="E"),
         Binding("S,shift+s", "save", "to playlist", key_display="S"),
         Binding("z", "sleep", "sleep timer"),
+        Binding("g", "goto", "go to artist or album"),
         Binding("Q,shift+q", "quality", "audio quality", key_display="Q"),
         Binding("shift+up", "move(-1)", "up", show=False),
         Binding("shift+down", "move(1)", "down", show=False),
@@ -564,7 +576,12 @@ class MusicApp(App):
             if kind == "playlists" and self.playlist_open is not None:
                 kind = "playlist"
             context = LIST_KEYS.get(kind, []) + APP_KEYS
-        self.query_one("#keys", Static).update(key_line(PLAYER_KEYS) + "\n" + key_line(context))
+        bar = self.query_one("#keys", Static)
+        width = max(20, bar.content_size.width or self.size.width - 2)
+        bar.update("\n".join(key_lines(PLAYER_KEYS, width) + key_lines(context, width)))
+
+    def on_resize(self) -> None:
+        self.call_after_refresh(self.show_keys)
 
     @on(OptionList.OptionSelected)
     def row_selected(self, event: OptionList.OptionSelected) -> None:
@@ -708,6 +725,50 @@ class MusicApp(App):
             self.notify(str(e), severity="error")
             return
         self.action_tab("radio")
+
+    # --- go to an artist or an album ---
+
+    def action_goto(self) -> None:
+        """g on a track (or with none, the one playing): its artist's or album's page."""
+        lst = self.focused
+        row: Any = None
+        if isinstance(lst, TrackList) and lst.highlighted is not None and lst.rows:
+            row = lst.rows[lst.highlighted]
+            if isinstance(lst, TrackList) and lst.kind == "lyrics":
+                row = None
+        if isinstance(row, music.Result) and row.kind in PAGES:
+            self.run_worker(self.open_in_search(row))  # an album, an artist: itself
+            return
+        if isinstance(row, music.Result) and row.kind != music.SONGS or row == NEW_PLAYLIST:
+            return
+        row = row or self.current()
+        if isinstance(row, Playlist) or not row or not row_id(row):
+            return
+        self.run_worker(self.goto(row_id(row), row_title(row)), group="goto", exclusive=True)
+
+    async def goto(self, video_id: str, title: str) -> None:
+        try:
+            links = await asyncio.to_thread(music.track_links, video_id)
+        except Exception:
+            links = []
+        if not links:
+            self.notify(f"no artist or album for {title}")
+            return
+        if len(links) == 1:
+            await self.open_in_search(links[0])
+            return
+        labels = [f"{'album' if r.kind == music.ALBUMS else 'artist'} · {r.title}" for r in links]
+
+        def chosen(index: int | None) -> None:
+            if index is not None:
+                self.run_worker(self.open_in_search(links[index]))
+
+        self.push_screen(Choose(f"go to: {title}", labels), chosen)
+
+    async def open_in_search(self, row: music.Result) -> None:
+        """A page opens in the search tab, on top of what it shows."""
+        self.action_tab("search")
+        await self.open_page(self.track_list("search"), row)
 
     # --- playlists ---
 

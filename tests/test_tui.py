@@ -706,3 +706,31 @@ def test_search_suggestions(monkeypatch):
             await pilot.press("q")
 
     asyncio.run(scenario())
+
+
+def test_go_to_the_artist_or_the_album(monkeypatch):
+    monkeypatch.setattr(music, "_client", FakeYTMusic)
+    store = Store()
+    store.add_play(Track(A, "Lonely"))
+    store.add_play(Track(S, "Daft Punk — One More Time"))
+
+    async def scenario():
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            search = app.track_list("search")
+            await pilot.press("3", "g")  # One More Time: its artist or its album
+            await until(pilot, lambda: len(app.screen_stack) == 2)
+            await pilot.press("down", "enter")  # the album
+            await until(pilot, lambda: lines(search)[:1] == ["Daft Punk — Discovery  (← back)"])
+            assert app.query_one(TabbedContent).active == "search"
+            search.highlighted = lines(search).index("Daft Punk")
+            await pilot.press("g")  # an artist's row: straight to the page
+            await until(pilot, lambda: lines(search)[:1] == ["Daft Punk  (← back)"])
+            await pilot.press("left")
+            await until(pilot, lambda: lines(search)[:1] == ["Daft Punk — Discovery  (← back)"])
+            await pilot.press("3", "down", "g")  # nothing known about this one
+            await pilot.pause(0.3)
+            assert len(app.screen_stack) == 1 and app.query_one(TabbedContent).active == "history"
+            await pilot.press("q")
+
+    asyncio.run(scenario())

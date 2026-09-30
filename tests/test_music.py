@@ -283,6 +283,18 @@ class FakeYTMusic:
         ]  # fmt: skip
 
     def get_watch_playlist(self, videoId=None, playlistId=None, limit=25, radio=False):
+        if videoId:  # a track's radio: the track itself first, with its album and artists
+            first = {"videoId": videoId, "title": "Lonely", "artists": []}
+            if videoId == S:
+                first = {
+                    "videoId": S,
+                    "title": "One More Time",
+                    "length": "5:20",
+                    "artists": [{"name": "Daft Punk", "id": "UCdp"}, {"name": "Romanthony"}],
+                    "album": {"name": "Discovery", "id": "MPREb_1"},
+                    "year": "2001",
+                }
+            return {"tracks": [first], "playlistId": "RDAMVM" + videoId, "lyrics": None}
         assert playlistId in ("RDEMdp", "RDCLAKmix")  # an artist's radio, a radio of Home
         tracks = [
             {"videoId": B, "title": "Around the World", "length": "7:09",
@@ -475,6 +487,14 @@ def test_suggestions():
     ]
     assert music.suggestions("fade", limit=2) == ["faded", "faded alan walker lyrics"]
     assert music.suggestions("zzz") == []
+
+
+def test_track_links():
+    assert music.track_links(S) == [
+        Result(ARTISTS, "UCdp", "Daft Punk"),  # an artist without an id has no page
+        Result(ALBUMS, "MPREb_1", "Daft Punk, Romanthony — Discovery"),
+    ]
+    assert music.track_links(A) == []
 
 
 def test_artist_radio():
