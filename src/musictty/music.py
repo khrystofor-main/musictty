@@ -29,6 +29,7 @@ RADIO = "radio"  # an artist's radio, a mix of Home: id is its playlist id, para
 MORE_SONGS = "more songs"  # a longer list of songs: id is its playlist's browse id
 MORE_ALBUMS = "more albums"  # all albums or singles: id is the channel id, with params
 MOODS = "mood"  # a mood or a genre of Explore: id is its params
+MORE_RESULTS = "more results"  # more of one kind of search results: id is the query
 
 
 @dataclass(frozen=True)
@@ -132,9 +133,14 @@ def _parsed(items: Any, parse: Any, *args: Any) -> list[Result]:
     return [r for r in (parse(item, *args) for item in items or [] if isinstance(item, dict)) if r]
 
 
-def search(query: str, limit: int = 8) -> Found:
+SEARCH_KINDS = {"songs": _song, "albums": _album, "artists": _artist, "playlists": _playlist}
+SEARCH_LIMIT = 8  # results of each kind
+MORE_LIMIT = 50  # results of one kind, for "all songs" and the like
+
+
+def search(query: str, limit: int = SEARCH_LIMIT) -> Found:
     """Songs, albums, artists and playlists for a query: four requests at once."""
-    kinds = (("songs", _song), ("albums", _album), ("artists", _artist), ("playlists", _playlist))
+    kinds = tuple(SEARCH_KINDS.items())
 
     def one(name: str) -> list:
         # a client per thread: its requests session is not meant to be shared
@@ -153,6 +159,14 @@ def suggestions(query: str, limit: int = 8) -> list[str]:
     """What YouTube Music suggests while a search is typed."""
     found = _client().get_search_suggestions(query)
     return [text for text in found or [] if isinstance(text, str) and text.strip()][:limit]
+
+
+def search_more(query: str, kind: str) -> Page:
+    """More results of one kind (MORE_RESULTS): all the songs for a query, and so on."""
+    found = _client().search(query, filter=kind, limit=MORE_LIMIT)
+    results = _parsed(found, SEARCH_KINDS[kind])[:MORE_LIMIT]
+    title = f"{kind.capitalize()} for «{query}»"
+    return Page(title, f"{len(results)} found", [Section("", results)])
 
 
 def find_songs(queries: list[str]) -> list[Track]:

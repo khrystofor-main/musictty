@@ -334,6 +334,16 @@ def test_search():
     ]
 
 
+def test_search_more_of_one_kind():
+    page = music.search_more("daft punk", "songs")
+    assert (page.title, page.detail) == ("Songs for «daft punk»", "2 found")
+    assert [r.id for r in page.sections[0].results] == [S, B]
+    assert FakeYTMusic.calls == [("daft punk", "songs", 50)]
+    assert music.search_more("daft punk", "artists").sections[0].results == [
+        Result(ARTISTS, "UCdp", "Daft Punk")
+    ]
+
+
 def test_album_keeps_only_playable_tracks():
     assert music.album("MPREb_1") == (
         "Daft Punk — Discovery",
