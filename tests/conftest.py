@@ -15,3 +15,13 @@ def isolated(tmp_path, monkeypatch):
         address = os.path.join(tempfile.mkdtemp(prefix="mt"), "mpv.sock")
     monkeypatch.setenv("MUSICTTY_IPC", address)
     return tmp_path / "home"
+
+
+@pytest.fixture(autouse=True)
+def no_youtube_music(monkeypatch):
+    """Tests never reach YouTube Music: those that need it put a fake client in its place."""
+
+    def unreachable():
+        raise ConnectionError("no YouTube Music in tests")
+
+    monkeypatch.setattr("musictty.music._client", unreachable)

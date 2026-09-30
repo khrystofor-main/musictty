@@ -49,7 +49,8 @@ the rest of an album or a playlist), then the radio's own picks. `enter` plays a
 `delete` removes it. The radio keeps adding picks once the queue has played out; with repeat
 all it adds nothing and the queue starts over.
 
-**Search** finds songs, albums, artists and playlists on YouTube Music: a song starts a radio,
+**Search** (`/`) suggests as you type, like YouTube Music (`↓` goes into the suggestions,
+`enter` searches the one under the cursor), and finds songs, albums, artists and playlists: a song starts a radio,
 an album or a playlist plays in order and then turns into a radio from its last track. `→`
 opens a playlist (`enter` plays it from that track), an album's page
 (its tracks: `enter` plays the album from that one) and an artist's page: their radio, top
@@ -130,6 +131,7 @@ still use it).
 - [x] Queue: up next, play next, add to queue, shuffle, repeat all, seek
 - [x] Playlists: YouTube Music's in search, your own in the player
 - [x] Home and Explore: new releases, charts, moods and genres
+- [x] Search suggestions
 - [x] AI radio: describe a mood in plain words, and a language model picks the songs
 - [ ] Album art in the terminal
 

@@ -640,3 +640,50 @@ def test_explore(monkeypatch):
     assert started[0] == (B, {})
     assert started[1] == (S, {"queue": FRENCH, "then_radio": True, "source": "playlist"})
     assert started[2][1]["source"] == "radio"
+
+
+def test_search_suggestions(monkeypatch):
+    monkeypatch.setattr(music, "_client", FakeYTMusic)
+    searched = []
+
+    def fake_search(query):
+        searched.append(query)
+        return music.Found()
+
+    monkeypatch.setattr(music, "search", fake_search)
+
+    def options(lst):
+        return [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+
+    async def scenario():
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            suggestions = app.query_one("#suggestions")
+            field = app.query_one("#search")
+            await pilot.press("slash", *"fade")
+            await until(pilot, lambda: suggestions.display and options(suggestions)[0] == "faded")
+            await pilot.press("down")  # into the suggestions
+            assert app.focused is suggestions and suggestions.highlighted == 0
+            await pilot.press("escape")  # back to typing, the suggestions stay
+            assert app.focused is field and suggestions.display
+            await pilot.press("down", "down", "down", "enter")  # the third suggestion
+            await until(pilot, lambda: searched == ["faded alan walker"])
+            assert not suggestions.display and field.value == ""
+            assert app.query_one(TabbedContent).active == "search"
+
+            await pilot.press("slash", *"zzz")  # nothing to suggest
+            await pilot.pause(0.5)
+            assert not suggestions.display
+            await pilot.press("enter")  # the search itself
+            await until(pilot, lambda: searched[-1:] == ["zzz"])
+
+            await pilot.press("a", *"fade")  # a mood for the ai: no suggestions
+            await pilot.pause(0.5)
+            assert not suggestions.display
+            await pilot.press("escape", "slash", *"fade")
+            await until(pilot, lambda: suggestions.display)
+            await pilot.press("escape")  # leaving the search hides them
+            await until(pilot, lambda: not suggestions.display)
+            await pilot.press("q")
+
+    asyncio.run(scenario())
