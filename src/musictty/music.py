@@ -26,6 +26,13 @@ class Result:
     detail: str = ""  # duration of a song, "Album · 1995" of an album
 
 
+@dataclass(frozen=True)
+class Lyrics:
+    lines: list[tuple[float | None, str]]  # (start in seconds when timed, text)
+    timed: bool
+    source: str = ""  # "Source: LyricFind"
+
+
 @dataclass
 class Found:
     songs: list[Result] = field(default_factory=list)
@@ -115,3 +122,19 @@ def artist_songs(browse_id: str) -> tuple[str, list[Result]]:
     data = _client().get_artist(browse_id)
     songs = [s for s in map(_song, (data.get("songs") or {}).get("results") or []) if s]
     return data.get("name") or "", songs
+
+
+def lyrics(video_id: str) -> Lyrics | None:
+    """A song's lyrics, with line timings when YouTube Music has them; None if it has none."""
+    client = _client()
+    browse_id = (client.get_watch_playlist(video_id, limit=1) or {}).get("lyrics")
+    if not browse_id:
+        return None
+    data = client.get_lyrics(browse_id, timestamps=True)
+    if not data or not data.get("lyrics"):
+        return None
+    source = data.get("source") or ""
+    if data.get("hasTimestamps"):
+        lines = [(line.start_time / 1000, line.text) for line in data["lyrics"]]
+        return Lyrics(lines, True, source)
+    return Lyrics([(None, text) for text in str(data["lyrics"]).splitlines()], False, source)

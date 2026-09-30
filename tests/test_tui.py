@@ -12,7 +12,7 @@ from textual.widgets import Static, TabbedContent
 from musictty import control, music, paths, player
 from musictty.models import Track
 from musictty.music import ALBUMS, ARTISTS, SONGS, Result
-from musictty.radio import LaunchSpec, Radio
+from musictty.radio import LIST_PROPERTY, LaunchSpec, Radio
 from musictty.store import Store
 from musictty.tui import MusicApp, TrackList
 from musictty.youtube import Stream
@@ -173,6 +173,46 @@ def test_ai_radio(monkeypatch):
             await pilot.press("a", *"broken", "enter")
             await until(pilot, lambda: len(moods) == 2)
             await pilot.press("slash", "escape", "q")
+
+    asyncio.run(scenario())
+
+
+def test_lyrics(monkeypatch):
+    timed = music.Lyrics([(1.0, "first"), (4.0, ""), (6.0, "third")], True, "Source: LF")
+    fetched = []
+
+    def fake_lyrics(video_id):
+        fetched.append(video_id)
+        return timed if video_id == S else None
+
+    monkeypatch.setattr(music, "lyrics", fake_lyrics)
+
+    async def scenario():
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            view = app.track_list("lyrics")
+            await pilot.press("6")
+            assert lines(view) == ["radio is off"]
+
+            def play(video_id, title):
+                app.props[LIST_PROPERTY] = [
+                    {"entry": 1, "id": video_id, "title": title, "current": True}
+                ]
+                app.player_changed(LIST_PROPERTY)
+
+            play(S, "Artist — Song")
+            await until(pilot, lambda: len(lines(view)) > 1)
+            assert lines(view) == ["Artist — Song", "", "first", "♪", "third", "", "Source: LF"]
+            app.position = 4.5  # the line being sung is highlighted
+            app.sync_lyrics()
+            assert view.highlighted == 3
+
+            play(A, "Other")
+            await until(pilot, lambda: lines(view)[-1] == "no lyrics for this track")
+            play(S, "Artist — Song")  # already fetched: no new request
+            await until(pilot, lambda: lines(view)[2:3] == ["first"])
+            assert fetched == [S, A]
+            await pilot.press("q")
 
     asyncio.run(scenario())
 

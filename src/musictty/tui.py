@@ -28,14 +28,16 @@ from .store import Store
 OBSERVED = ("media-title", "pause", "volume", "loop-file", "duration")
 OBSERVED += (LIST_PROPERTY, SOURCE_PROPERTY)
 
-# tab id -> title; keys 1-5 switch between them
+# tab id -> title; keys 1-6 switch between them
 TABS = {
     "radio": "Radio",
     "recent": "Recent",
     "history": "History",
     "liked": "Liked",
     "search": "Search",
+    "lyrics": "Lyrics",
 }
+LYRICS_TOP = 2  # the track's title and a blank line above the lyrics
 
 
 SEARCH_HINT = "/ search YouTube Music: songs, albums, artists"
@@ -129,6 +131,9 @@ class MusicApp(App):
         self.liked_ids: set[str] = set()  # refreshed with the lists
         # the search tab: what an artist's songs replaced, for going back with ←
         self.search_back: list[tuple[list[Any], list[Any]]] = []
+        # the lyrics tab: whose lyrics it shows, and the lyrics already fetched
+        self.lyrics_id: str | None = ""  # "" = nothing shown yet; None = nothing playing
+        self.lyrics_cache: dict[str, music.Lyrics | None] = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(id="player"):
@@ -148,7 +153,7 @@ class MusicApp(App):
         playing = await player.is_running(paths.ipc_address())
         self.action_tab("radio" if playing else "recent")
         self.run_worker(self.watch_player(), group="player")
-        self.set_interval(1, self.poll_position)
+        self.set_interval(0.5, self.poll_position)
 
     # --- the player ---
 
@@ -182,16 +187,19 @@ class MusicApp(App):
                     self.player_changed(None)
 
     async def poll_position(self) -> None:
-        # time-pos changes all the time: once a second is enough
+        # time-pos changes all the time: twice a second is enough, for the lyrics too
         mpv = self.mpv
         if mpv and not mpv.closed:
             with contextlib.suppress(MpvError):
                 self.position = await mpv.get("time-pos")
             self.render_now()
+            self.sync_lyrics()
 
     def player_changed(self, name: str | None) -> None:
         if name in (None, LIST_PROPERTY, "loop-file"):
             self.refresh_lists()
+        if name in (None, LIST_PROPERTY):
+            self.update_lyrics()
         self.render_now()
 
     def repeating(self) -> bool:
@@ -269,6 +277,7 @@ class MusicApp(App):
     @on(TabbedContent.TabActivated)
     def tab_activated(self) -> None:
         self.refresh_lists()
+        self.update_lyrics()
         if not isinstance(self.focused, Input):
             self.active_list().focus()
 
@@ -400,6 +409,64 @@ class MusicApp(App):
             self.search_go_back()
         else:
             self.exit()
+
+    # --- lyrics ---
+
+    def update_lyrics(self) -> None:
+        """Show the playing track's lyrics while the lyrics tab is open."""
+        if self.query_one(TabbedContent).active != "lyrics":
+            return
+        cur = self.current() or {}
+        video_id = cur.get("id") or None
+        if video_id == self.lyrics_id:
+            return
+        self.lyrics_id = video_id
+        view = self.track_list("lyrics")
+        if not video_id:
+            view.show([None], ["radio is off" if self.mpv is None else "nothing is playing"])
+        elif video_id in self.lyrics_cache:
+            self.show_lyrics(video_id)
+        else:
+            view.show([None], ["loading lyrics…"])
+            self.run_worker(self.load_lyrics(video_id), group="lyrics", exclusive=True)
+
+    async def load_lyrics(self, video_id: str) -> None:
+        try:
+            self.lyrics_cache[video_id] = await asyncio.to_thread(music.lyrics, video_id)
+        except Exception:
+            self.lyrics_cache[video_id] = None
+        if self.lyrics_id == video_id:
+            self.show_lyrics(video_id)
+
+    def show_lyrics(self, video_id: str) -> None:
+        lyrics = self.lyrics_cache.get(video_id)
+        title = Text((self.current() or {}).get("title") or "", style="bold")
+        if not lyrics:
+            lines: list[Any] = [title, "", Text("no lyrics for this track", style="dim")]
+        else:
+            lines = [title, "", *(text or "♪" for _, text in lyrics.lines)]
+            if lyrics.source:
+                lines += ["", Text(lyrics.source, style="dim")]
+        view = self.track_list("lyrics")
+        view.show([None] * len(lines), lines)
+        view.highlighted = LYRICS_TOP if lyrics else None
+        self.sync_lyrics()
+
+    def sync_lyrics(self) -> None:
+        """Keep the line being sung highlighted (and in view)."""
+        lyrics = self.lyrics_cache.get(self.lyrics_id or "")
+        if not lyrics or not lyrics.timed or self.position is None:
+            return
+        if self.query_one(TabbedContent).active != "lyrics":
+            return
+        at = self.position + 0.3  # a line shows a moment before it's sung
+        sung = [i for i, (start, _) in enumerate(lyrics.lines) if start is not None and start <= at]
+        line = LYRICS_TOP + (sung[-1] if sung else 0)
+        view = self.track_list("lyrics")
+        if view.highlighted != line:
+            view.highlighted = line
+            # the sung line stays in the middle, like karaoke
+            view.scroll_to(y=max(0, line - view.size.height // 2), animate=False)
 
     # --- search ---
 

@@ -34,7 +34,9 @@ in the user runtime dir elsewhere). Its clients:
   reconnecting as radios come and go, and quitting it leaves the music playing. Keys in
   the lists follow v0's menus (enter, ←/→, delete). The Search tab lists songs, albums and
   artists (`music.py`); an album plays as a queue that turns into a radio
-  (`LaunchSpec.then_radio`: no mixes until its last track, then a normal radio).
+  (`LaunchSpec.then_radio`: no mixes until its last track, then a normal radio). The
+  Lyrics tab loads the playing track's lyrics (`music.lyrics`, cached) while it is open and
+  highlights the sung line from the polled time-pos.
 - `daemon.py` + `radio.py` — the background process (`python -m musictty.daemon`, a
   `LaunchSpec` as JSON on stdin). It starts mpv, and `Radio` is the port of
   `youtube-music.lua`: refills from the mix, prefetches the next track to a direct
