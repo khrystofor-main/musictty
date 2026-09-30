@@ -15,6 +15,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, ProgressBar, Static, TabbedContent, TabPane
 from textual.widgets.option_list import Option
 
@@ -516,6 +517,10 @@ class MusicApp(App):
 
     def on_descendant_focus(self) -> None:
         self.show_keys()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # a dialog is open: its keys only, nothing happens behind it
+        return not isinstance(self.screen, ModalScreen)
 
     def show_keys(self) -> None:
         """Two lines of keys: the player's, then the focused list's (or the input's)."""
