@@ -3,6 +3,7 @@
 - seeds.tsv   tracks radios were started from (the bare `musictty` list)
 - plays.tsv   every started track of every radio (`musictty history`)
 - liked.tsv   liked tracks (`musictty like / liked`)
+- disliked.tsv  tracks the radio never picks (`musictty dislike / disliked`)
 - settings.json  volume, repeat and audio quality, shared by all radios
 - playlists.json  your own playlists: [{"name": ..., "tracks": [[id, title], ...]}, ...]
 
@@ -26,6 +27,7 @@ from .youtube import DEFAULT_QUALITY, QUALITIES
 SEEDS = "seeds.tsv"
 PLAYS = "plays.tsv"
 LIKED = "liked.tsv"
+DISLIKED = "disliked.tsv"
 SETTINGS = "settings.json"
 PLAYLISTS = "playlists.json"
 
@@ -168,6 +170,35 @@ class Store:
         if len(keep) == len(records):
             return False
         write_lines(self.path(LIKED), keep)
+        return True
+
+    # --- dislikes: the radio skips them and never picks them again ---
+
+    def disliked(self) -> list[Track]:
+        """Disliked tracks, the latest first."""
+        seen: set[str] = set()
+        out = []
+        for _, track in reversed(self._records(DISLIKED)):
+            if track.id not in seen:
+                seen.add(track.id)
+                out.append(track)
+        return out
+
+    def disliked_ids(self) -> set[str]:
+        return {track.id for _, track in self._records(DISLIKED)}
+
+    def dislike(self, track: Track) -> None:
+        """A disliked track is no longer liked."""
+        self.unlike(track.id)
+        if track.id not in self.disliked_ids():
+            self._append(DISLIKED, track)
+
+    def undislike(self, track_id: str) -> bool:
+        records = self._records(DISLIKED)
+        keep = [_line(t, d) for d, t in records if t.id != track_id]
+        if len(keep) == len(records):
+            return False
+        write_lines(self.path(DISLIKED), keep)
         return True
 
     # --- settings ---

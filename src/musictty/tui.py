@@ -219,10 +219,10 @@ PLAYER_KEYS = [
     ("space", "pause"),
     ("n", "next"),
     ("p", "prev"),
-    ("+/-", "volume"),
+    ("+/-", "vol"),
     (",/.", "seek"),
-    ("l", "like"),
-    ("r/R", "repeat one/all"),
+    ("l/d", "like/dislike"),
+    ("r/R", "repeat"),
     ("x", "shuffle"),
     ("s", "stop"),
 ]
@@ -301,6 +301,7 @@ class MusicApp(App):
         Binding("comma", f"seek({-SEEK_STEP})", "-10s", key_display=","),
         Binding("full_stop", f"seek({SEEK_STEP})", "+10s", key_display="."),
         Binding("l", "like", "like"),
+        Binding("d", "dislike", "dislike"),
         Binding("r", "repeat", "repeat"),
         Binding("R,shift+r", "repeat_all", "repeat all", key_display="R"),
         Binding("x", "shuffle", "shuffle"),
@@ -966,6 +967,22 @@ class MusicApp(App):
         else:
             store.like(track)
             self.notify(f"♥ {track.title}")
+        self.refresh_lists()
+        self.render_now()
+
+    async def action_dislike(self) -> None:
+        """d: never this track again (it's skipped); d on a disliked one playing takes it back."""
+        cur = self.current()
+        if not cur or not cur.get("id"):
+            self.notify("nothing is playing")
+            return
+        track = Track(cur["id"], cur.get("title") or cur["id"])
+        if track.id in Store().disliked_ids():
+            Store().undislike(track.id)
+            self.notify(f"not disliked any more: {track.title}")
+            return
+        await control.dislike(track)
+        self.notify(f"✕ {track.title}: skipped, and not again", timeout=4)
         self.refresh_lists()
         self.render_now()
 

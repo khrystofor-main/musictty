@@ -77,6 +77,9 @@ class FakeMpv:
             pass  # the tests send the property-change events themselves
         elif name == "quit":
             self.quit = True
+        elif name == "playlist-next":
+            if self.pos is not None and self.pos + 1 < len(self.entries):
+                self.play(self.pos + 1)
         else:
             raise AssertionError(f"unexpected command {cmd}")
         return None

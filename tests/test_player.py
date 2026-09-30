@@ -151,6 +151,9 @@ def test_radio_and_commands_on_a_real_player(files, capsys):
         assert await current() == B
         await until(lambda: upnext(A))
         assert await command("shuffle") == (0, "")
+        assert await command("dislike") == (0, f"✕ {title(B)}\n")  # skipped
+        await until(lambda: played(A, B, S, A, S))
+        assert store.disliked_ids() == {B}
 
         assert await command("stop") == (0, "")
         await asyncio.wait_for(task, 5)  # the radio ends with its player
