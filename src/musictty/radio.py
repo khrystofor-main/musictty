@@ -81,6 +81,8 @@ class LaunchSpec:
     # the queue plays once, then the radio goes on from its last track (an album)
     then_radio: bool = False
     quality: str = youtube.DEFAULT_QUALITY
+    # the sleep timer of the radio this one replaces, as SLEEP_PROPERTY: it goes on
+    sleep: str = ""
 
     @property
     def loops(self) -> bool:
@@ -104,6 +106,7 @@ class LaunchSpec:
             loop_file=bool(data.get("loop_file", False)),
             then_radio=bool(data.get("then_radio", False)),
             quality=data.get("quality") or youtube.DEFAULT_QUALITY,
+            sleep=str(data.get("sleep") or ""),
         )
 
 
@@ -303,6 +306,7 @@ class Radio:
         spec = self.spec
         await self.mpv.set(SOURCE_PROPERTY, spec.source)
         await self.mpv.set(PID_PROPERTY, os.getpid())
+        await self.carry_sleep(spec.sleep)
         for track in spec.queue or []:
             self.names[track.id] = track.title
         if spec.stream:
@@ -609,6 +613,18 @@ class Radio:
             self.queued.clear()  # the shuffled queue is one queue now
         log.info("shuffled %d tracks", len(upcoming))
         await self.after_edit()
+
+    async def carry_sleep(self, value: str) -> None:
+        """The timer of the radio this one replaced: until the same time, or after a track."""
+        if value == SLEEP_END:
+            await self.set_sleep(SLEEP_END)
+            return
+        try:
+            left = float(value) - time.time()
+        except ValueError:
+            return
+        if left > 0:
+            await self.set_sleep(str(left))
 
     async def set_sleep(self, when: str) -> None:
         """A new sleep timer replaces the one set before."""
