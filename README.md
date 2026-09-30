@@ -39,8 +39,9 @@ what's up next, `s` stop, `z` sleep timer, `Q` audio quality, `/` search, `a` AI
 
 In the lists, `enter` starts a radio from a track, `e` adds it to the queue, `E` plays it
 next, `S` saves it to one of your playlists (an album or a playlist from the search goes in
-whole) and `g` goes to its artist or album (outside the lists: the track that's playing). `←` jumps back in the current radio; in liked, `→` plays them in a loop from
-that track and `←` does the same with it on repeat, `delete` removes it.
+whole) and `g` goes to its artist or album (outside the lists: the track that's playing).
+`←` jumps back in the current radio; in liked, `→` plays them in a loop from that track and
+`←` does the same with it on repeat, `delete` removes it.
 
 **Up next** (tab `7`) is what plays after the current track: the queue first (what you added,
 the rest of an album or a playlist), then the radio's own picks. `enter` plays a track now
