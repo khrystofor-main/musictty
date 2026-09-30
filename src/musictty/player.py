@@ -68,6 +68,65 @@ def mpv_command(mpv: str, address: str, spec: LaunchSpec) -> list[str]:
     return args
 
 
+def memory(pid: int) -> tuple[int | None, int] | None:
+    """(private, working set) bytes of a process; private is None where the OS doesn't say."""
+    try:
+        if WINDOWS:
+            return _windows_memory(pid)
+        if sys.platform.startswith("linux"):
+            fields = {}
+            for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                key, _, value = line.partition(":")
+                if value.strip().endswith("kB"):
+                    fields[key] = int(value.split()[0]) * 1024
+            return fields.get("RssAnon"), fields["VmRSS"]
+        out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True)
+        return None, int(out.stdout.strip()) * 1024
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _windows_memory(pid: int) -> tuple[int | None, int] | None:
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS_EX
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            *(
+                (name, ctypes.c_size_t)
+                for name in (
+                    "PeakWorkingSetSize",
+                    "WorkingSetSize",
+                    "QuotaPeakPagedPoolUsage",
+                    "QuotaPagedPoolUsage",
+                    "QuotaPeakNonPagedPoolUsage",
+                    "QuotaNonPagedPoolUsage",
+                    "PagefileUsage",
+                    "PeakPagefileUsage",
+                    "PrivateUsage",
+                )
+            ),  # fmt: skip
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        counters = Counters(cb=ctypes.sizeof(Counters))
+        if not kernel32.K32GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            return None
+        return counters.PrivateUsage, counters.WorkingSetSize
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _clear_stale(address: str) -> None:
     """mpv leaves its unix socket file behind when it exits."""
     if WINDOWS:
@@ -94,6 +153,23 @@ def launch_mpv(spec: LaunchSpec, address: str) -> subprocess.Popen:
     )
 
 
+LOG_LIMIT = 512 * 1024
+
+
+def _open_log(path: Path):
+    """The previous radio may still write its last lines: append, never truncate under it.
+
+    Once the log is big, it moves to radio.log.1 and a new one starts (on Windows that waits
+    until no process holds the old one).
+    """
+    try:
+        if path.stat().st_size > LOG_LIMIT:
+            os.replace(path, path.with_suffix(path.suffix + ".1"))
+    except OSError:
+        pass
+    return open(path, "ab")
+
+
 def spawn_background(args: list[str], stdin: bytes, log_path: Path) -> subprocess.Popen:
     """Start a process detached from the terminal: stdin from `stdin`, output to the log."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +181,7 @@ def spawn_background(args: list[str], stdin: bytes, log_path: Path) -> subproces
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
-    with open(log_path, "wb") as log:
+    with _open_log(log_path) as log:
         proc = subprocess.Popen(
             args, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, **kwargs
         )

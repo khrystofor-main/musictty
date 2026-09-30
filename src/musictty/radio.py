@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -36,6 +37,7 @@ T = TypeVar("T")
 
 LIST_PROPERTY = "user-data/musictty/list"
 SOURCE_PROPERTY = "user-data/musictty/source"
+PID_PROPERTY = "user-data/musictty/pid"  # the radio process, for `musictty mem`
 JUMP_MESSAGE = "musictty-jump"
 
 RADIO_MIX = "radio mix"
@@ -253,6 +255,7 @@ class Radio:
     async def start(self) -> None:
         spec = self.spec
         await self.mpv.set(SOURCE_PROPERTY, spec.source)
+        await self.mpv.set(PID_PROPERTY, os.getpid())
         for track in spec.queue or []:
             self.names[track.id] = track.title
         if spec.stream:
