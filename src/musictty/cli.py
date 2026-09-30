@@ -15,13 +15,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
-from . import control, youtube
+from . import control, player, youtube
 from .control import Failure, list_lines
 from .ipc import Mpv, MpvError
 from .models import Track
 from .radio import (
     JUMP_MESSAGE,
     LIST_PROPERTY,
+    PID_PROPERTY,
     RADIO_MIX,
     SOURCE_PROPERTY,
 )
@@ -72,6 +73,7 @@ musictty — endless music radio in the terminal
   musictty vol+ / vol-         volume ±5
   musictty stop                stop the radio
 
+  musictty mem                 memory of the player and the radio
   musictty update              update yt-dlp if the radio stops finding tracks
   musictty import-v0 [folder]  import radios, history and likes from the PowerShell version
   musictty help                this list"""
@@ -89,6 +91,7 @@ SIMPLE = {
     "like",
     "unlike",
     "update",
+    "mem",
     "help",
     "import-v0",
     "list",
@@ -320,6 +323,19 @@ def cmd_stop(call: Call) -> None:
     asyncio.run(control.stop())
 
 
+def cmd_mem(call: Call) -> None:
+    async def pids(mpv: Mpv) -> tuple[int | None, int | None]:
+        return await mpv.get("pid"), await mpv.get(PID_PROPERTY)
+
+    for name, pid in zip(("player", "radio"), on_player(pids), strict=True):
+        usage = player.memory(pid) if pid else None
+        if usage:
+            private, working_set = usage
+            parts = [f"private {private / 2**20:.1f} mb"] if private is not None else []
+            parts.append(f"working set {working_set / 2**20:.1f} mb")
+            print(f"{name}: " + ", ".join(parts))
+
+
 def cmd_update(call: Call) -> int:
     # YouTube breaks old yt-dlp versions now and then; the running radio picks it up on restart
     package = "yt-dlp[default,deno]"
@@ -378,6 +394,7 @@ COMMANDS: dict[str, Callable[[Call], int | None]] = {
     "play": cmd_playback,
     "stop": cmd_stop,
     "update": cmd_update,
+    "mem": cmd_mem,
     "import-v0": cmd_import,
 }
 

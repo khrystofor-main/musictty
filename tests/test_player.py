@@ -102,6 +102,11 @@ def test_radio_and_commands_on_a_real_player(files, capsys):
         assert await command("vol-") == (0, "")
         assert await mpv.get("volume") == 65
 
+        code, out = await command("mem")
+        assert code == 0
+        assert [line.split(":")[0] for line in out.splitlines()] == ["player", "radio"]
+        assert "working set" in out
+
         assert await command("pause") == (0, "")
         assert await mpv.get("pause") is True
         assert await command("play") == (0, "")
@@ -158,3 +163,24 @@ def test_background_process_has_no_console_window(tmp_path):
     proc = player.spawn_background([sys.executable, "-c", code], b"", log)
     assert proc.wait(timeout=30) == 0
     assert log.read_text().strip() == "0"
+
+
+def test_the_log_is_appended_and_rotated(tmp_path, monkeypatch):
+    log = tmp_path / "radio.log"
+    log.write_bytes(b"old radio\n")
+    code = "import sys; sys.stdout.write('new radio')"
+    assert player.spawn_background([sys.executable, "-c", code], b"", log).wait(timeout=30) == 0
+    assert log.read_bytes().replace(b"\r", b"") == b"old radio\nnew radio"
+
+    monkeypatch.setattr(player, "LOG_LIMIT", 5)
+    assert player.spawn_background([sys.executable, "-c", code], b"", log).wait(timeout=30) == 0
+    assert (tmp_path / "radio.log.1").read_bytes().replace(b"\r", b"") == b"old radio\nnew radio"
+    assert log.read_bytes() == b"new radio"
+
+
+def test_memory_of_a_process():
+    private, working_set = player.memory(os.getpid())
+    assert working_set > 1_000_000
+    if sys.platform == "win32" or sys.platform.startswith("linux"):
+        assert 0 < private <= working_set * 4
+    assert player.memory(2**22 + 12345) is None  # no such process

@@ -26,6 +26,7 @@ S, A, B = (tid(n) for n in range(3))
         ([S], Call("radio", text=S)),
         (["now"], Call("now")),
         (["vol+"], Call("vol+")),
+        (["mem"], Call("mem")),
         (["repeat", "on"], Call("repeat", text="on")),
         (["list"], Call("list")),
         (["list", "2"], Call("list", number=2)),

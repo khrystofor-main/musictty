@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 musictty = "musictty.cli:main"
+music = "musictty.cli:main"  # v0's name
 
 [dependency-groups]
 dev = [

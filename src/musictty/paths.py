@@ -33,5 +33,5 @@ def ipc_address() -> str:
 
 
 def log_path() -> Path:
-    """Log of the background radio process, rewritten on every start."""
+    """Log of the background radio processes; the previous one is radio.log.1."""
     return data_dir() / "radio.log"

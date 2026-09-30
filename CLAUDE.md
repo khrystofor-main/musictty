@@ -1,12 +1,13 @@
 # musictty — context for Claude Code
 
-Endless background music radio for the terminal. Two versions live side by side:
-- **v0** — the Windows-only PowerShell prototype in the repo root. Still in daily use
-  (its folder is on the developer's PATH as `music`): don't move or break it.
-- **Python version** — the cross-platform rewrite in `src/musictty/`, command `musictty`.
-  Core radio, CLI and a first Textual UI are done (see README roadmap).
+Endless background music radio for the terminal.
+- **Python version** — the product, in `src/musictty/`: commands `musictty` and `music`
+  (the same entry point; `music` took over v0's name). CLI, Textual UI, search, lyrics,
+  AI radio (see README roadmap).
+- **v0** — the Windows-only PowerShell prototype, retired to `legacy/`. Kept for history
+  and for anyone who puts `legacy/` on PATH: don't break it, don't develop it.
 
-## Architecture (v0)
+## Architecture (v0, `legacy/`)
 
 - `music.cmd` / `music.ps1` — thin wrappers that call `radio.ps1` (the folder is on PATH).
 - `radio.ps1` — argument parsing, console menus, JSON IPC to mpv over the named pipe
@@ -16,7 +17,7 @@ Endless background music radio for the terminal. Two versions live side by side:
   `music list`, appends to `play-history.txt`.
 - `youtube-music.conf` — mpv settings tuned for minimal memory.
 
-Runtime data next to the scripts (git-ignored, personal):
+Runtime data next to the scripts (git-ignored, personal; `musictty import-v0` reads it):
 `history.txt` (radio seeds, read by the bare `music` menu), `play-history.txt`
 (every started track, `music history`), `liked.txt` (`music like/unlike/liked`),
 `liked-queue.txt` (queue for the liked playlist, written by radio.ps1, read by the
@@ -53,13 +54,15 @@ the daemon), `youtube.py` (yt-dlp as a library; blocking, run in a thread),
 
 Data in the user data dir (platformdirs), same `date<TAB>id<TAB>title` lines as v0:
 `seeds.tsv`, `plays.tsv`, `liked.tsv`, `settings.json` (volume, repeat), `radio.log`
-(the daemon's log, rewritten on every radio start). `musictty import-v0` merges v0's files.
+(the daemons' log: appended, never truncated under a still-running old daemon; past 512 KB
+it moves to `radio.log.1`). The radio publishes its pid in `user-data/musictty/pid` for
+`musictty mem` (memory of mpv and of the radio process). `musictty import-v0` merges v0's files.
 
 ## Gotchas
 
 - A running radio keeps the old code: changes to `youtube-music.lua` (v0) or to the
   daemon/radio modules take effect only after the radio is restarted.
-- `radio.ps1` must stay UTF-8 **with BOM**, otherwise Windows PowerShell 5.1 breaks the
+- `legacy/radio.ps1` must stay UTF-8 **with BOM**, otherwise Windows PowerShell 5.1 breaks the
   Cyrillic comments. Check the BOM after every edit.
 - Help text is in English in both versions; code comments are Russian in v0 and English
   in the Python version. User-facing messages are short and lowercase.
