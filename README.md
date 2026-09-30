@@ -48,8 +48,10 @@ the rest of an album or a playlist), then the radio's own picks. `enter` plays a
 all it adds nothing and the queue starts over.
 
 **Search** finds songs, albums and artists on YouTube Music: a song starts a radio, an album
-plays in order and then turns into a radio from its last track, an artist shows their top
-songs (`←` goes back to the results).
+plays in order and then turns into a radio from its last track. `→` opens an album's page
+(its tracks: `enter` plays the album from that one) and an artist's page: their radio, top
+songs, albums, singles and similar artists, with the full lists one `→` further. `←` goes
+back.
 
 **Lyrics** (tab `6`) follow the song line by line when YouTube Music has them timed, and
 show as plain text otherwise.
@@ -109,6 +111,7 @@ still use it).
 - [x] Python rewrite, cross-platform: background radio, history, likes, command line
 - [x] Terminal UI ([Textual](https://textual.textualize.io/)): player, radios, history, likes, search
 - [x] Rich search: songs, albums, artists
+- [x] Artist and album pages
 - [x] Lyrics, synced with the song
 - [x] Queue: up next, play next, add to queue, shuffle, repeat all, seek
 - [ ] Playlists in search

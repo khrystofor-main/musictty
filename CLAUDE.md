@@ -35,7 +35,9 @@ in the user runtime dir elsewhere). Its clients:
   reconnecting as radios come and go, and quitting it leaves the music playing. Keys in
   the lists follow v0's menus (enter, ←/→, delete). The Search tab lists songs, albums and
   artists (`music.py`); an album plays as a queue that turns into a radio
-  (`LaunchSpec.then_radio`: no mixes until its last track, then a normal radio). The
+  (`LaunchSpec.then_radio`: no mixes until it has played out, then a normal radio). Artists
+  and albums open as pages (`music.Page`: a title, a detail line, sections of `Result`s) in
+  the same tab, stacked in `search_back` for ←. The
   Lyrics tab loads the playing track's lyrics (`music.lyrics`, cached) while it is open and
   highlights the sung line from the polled time-pos. The Up next tab shows
   `user-data/musictty/upnext`; `e`/`E` in any list queue a track (control.enqueue). The key
@@ -57,7 +59,7 @@ in the user runtime dir elsewhere). Its clients:
 Other modules: `control.py` (start/stop a radio, volume, repeat: shared by CLI and UI),
 `ai.py` (AI radio: an OpenAI-compatible chat API turns a mood into "Artist - Title" songs;
 presets DeepSeek and Nous Portal, chosen by which key env var is set; `control.ai_radio` finds
-them with ytmusicapi and plays them as a then_radio queue), `music.py` (ytmusicapi: search, albums, artists' top songs; yt-dlp's search only gives bare
+them with ytmusicapi and plays them as a then_radio queue), `music.py` (ytmusicapi: search, album and artist pages, an artist's radio; yt-dlp's search only gives bare
 ids for albums and artists), `ipc.py` (async JSON IPC client), `player.py` (find/launch/stop mpv, spawn
 the daemon), `youtube.py` (yt-dlp as a library; blocking, run in a thread),
 `store.py` (data files, v0 import), `paths.py`, `mpv.conf`.
