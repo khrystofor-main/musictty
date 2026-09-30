@@ -186,9 +186,17 @@ def test_background_radio_starts_replaces_and_stops(files, monkeypatch, capsys):
     assert cli.main([S]) == 0
     assert now() == f"Локально — {S} · radio mix\n"
 
-    # a new radio replaces the playing one
+    # a new radio replaces the playing one, and keeps its sleep timer
+    assert cli.main(["sleep", "30"]) == 0
+    for _ in range(100):  # the radio has taken it
+        cli.main(["now"])
+        if "sleep" in capsys.readouterr().out:
+            break
+        time.sleep(0.05)
     assert cli.main([f"https://youtu.be/{A}"]) == 0
-    assert now() == f"Локально — {A} · radio mix\n"
+    out = now()
+    assert out.startswith(f"Локально — {A} · radio mix · sleep ")
+    assert "sleep 29:" in out or "sleep 30:00" in out
 
     assert cli.main(["stop"]) == 0
     assert not asyncio.run(player.is_running(paths.ipc_address()))

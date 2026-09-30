@@ -125,6 +125,9 @@ async def start(
         loop_file=settings.repeat or repeat_one,
     )
     address = paths.ipc_address()
+    # a sleep timer is kept across radios, as it would be in one
+    with contextlib.suppress(NotRunning):
+        spec.sleep = str(await with_player(lambda mpv: mpv.get(SLEEP_PROPERTY)) or "")
     # the old radio kept playing while the new one was being prepared: stop it only now
     await player.stop(address)
     store.trim_plays()

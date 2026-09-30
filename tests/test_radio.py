@@ -602,3 +602,22 @@ def test_disliked_tracks_are_never_picked_and_skipped(store):
     mpv, radio = run(scenario())
     assert radio.video_id(mpv.entries[mpv.pos]["filename"]) == D
     assert {B, D, S} <= radio.seen
+
+
+def test_a_new_radio_keeps_the_sleep_timer(store):
+    source = FakeSource({S: [S, A]})
+
+    async def scenario(sleep):
+        spec = LaunchSpec(seed=S, stream=source.stream(S), sleep=sleep)
+        assert LaunchSpec.from_json(spec.to_json()) == spec
+        mpv, radio = await started(spec, source, store)
+        if radio.sleep_task:
+            radio.sleep_task.cancel()
+        return mpv.props.get(radio_module.SLEEP_PROPERTY), radio.sleep_at_end
+
+    deadline = time.time() + 600
+    value, _ = run(scenario(str(deadline)))
+    assert abs(float(value) - deadline) < 1  # the same time as before
+    assert run(scenario("end")) == ("end", True)
+    assert run(scenario(str(time.time() - 5))) == (None, False)  # over already
+    assert run(scenario("")) == (None, False)
