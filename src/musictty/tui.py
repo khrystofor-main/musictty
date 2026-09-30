@@ -577,7 +577,7 @@ class MusicApp(App):
                 kind = "playlist"
             context = LIST_KEYS.get(kind, []) + APP_KEYS
         bar = self.query_one("#keys", Static)
-        width = max(20, (bar.size.width or self.size.width) - 2)
+        width = max(20, bar.content_size.width or self.size.width - 2)
         bar.update("\n".join(key_lines(PLAYER_KEYS, width) + key_lines(context, width)))
 
     def on_resize(self) -> None:
