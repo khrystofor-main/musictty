@@ -550,6 +550,8 @@ def test_playlists(monkeypatch):
             await until(pilot, lambda: names()["Evening"] == [A, S])
             await pilot.press("3", "S", "down", "down", "enter", *"Road", "enter")
             await until(pilot, lambda: names().get("Road") == [S])
+            await pilot.press("3", "S", "S", "8", "escape")  # the keys behind a dialog wait
+            assert app.query_one(TabbedContent).active == "history" and len(app.screen_stack) == 1
             await pilot.press("3", "S", "escape")  # changed my mind
             await pilot.press("3", "S", "enter")
             await until(pilot, lambda: names()["Mix"] == [B, S])
