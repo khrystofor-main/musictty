@@ -61,7 +61,19 @@ keeps playing).
 
 Search (`/`) finds songs, albums and artists on YouTube Music: a song starts a radio, an
 album plays in order and then turns into a radio from its last track, an artist shows
-their top songs (`←` goes back to the results). In the lists, `enter` starts a radio from a track, and the arrows work as
+their top songs (`←` goes back to the results).
+
+AI radio (`a`, or `musictty ai "calm electronic for an evening of work"`): a language model
+picks a few songs for the mood, they play in order, and the radio goes on from the last one.
+It works with any OpenAI-compatible API; set the key of one of the presets:
+
+```powershell
+setx DEEPSEEK_API_KEY "sk-..."     # DeepSeek (deepseek-chat)
+setx NOUS_API_KEY "..."            # or Nous Portal (Hermes)
+```
+
+`MUSICTTY_AI_PROVIDER` picks one when both are set; `MUSICTTY_AI_URL`, `MUSICTTY_AI_MODEL` and
+`MUSICTTY_AI_KEY` point it anywhere else. The key stays in your environment. In the lists, `enter` starts a radio from a track, and the arrows work as
 in v0's menus: `←` jumps back in the current radio; in liked, `→` plays them in a loop and
 `←` does the same with that track on repeat, `delete` removes it.
 
@@ -107,7 +119,7 @@ list the background process publishes there.
 - [x] Terminal UI ([Textual](https://textual.textualize.io/)): player, radios, history, likes, search
 - [x] Rich search: songs, albums, artists
 - [ ] Playlists and lyrics
-- [ ] AI radio: describe a mood in plain words, and Claude builds the queue
+- [x] AI radio: describe a mood in plain words, and a language model picks the songs
 - [ ] Album art in the terminal
 
 ## Built with Claude Code

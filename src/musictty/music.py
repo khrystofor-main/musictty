@@ -83,6 +83,26 @@ def search(query: str, limit: int = 8) -> Found:
     return found
 
 
+def find_songs(queries: list[str]) -> list[Track]:
+    """The first song found for each query, in their order; misses and repeats are skipped."""
+
+    def first(query: str) -> Result | None:
+        try:
+            return next(
+                filter(None, map(_song, _client().search(query, filter="songs", limit=1))), None
+            )
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        found = list(pool.map(first, queries))
+    tracks: dict[str, Track] = {}
+    for result in found:
+        if result and result.id not in tracks:
+            tracks[result.id] = Track(result.id, result.title)
+    return list(tracks.values())
+
+
 def album(browse_id: str) -> tuple[str, list[Track]]:
     """An album's title and its playable tracks, in order."""
     data = _client().get_album(browse_id)

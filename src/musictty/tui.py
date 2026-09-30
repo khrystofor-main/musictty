@@ -22,7 +22,7 @@ from . import control, music, paths, player
 from .control import Failure
 from .ipc import Mpv, MpvError, NotRunning
 from .models import Track
-from .radio import JUMP_MESSAGE, LIST_PROPERTY, RADIO_MIX, SOURCE_PROPERTY
+from .radio import ALBUM, JUMP_MESSAGE, LIST_PROPERTY, RADIO_MIX, SOURCE_PROPERTY
 from .store import Store
 
 OBSERVED = ("media-title", "pause", "volume", "loop-file", "duration")
@@ -36,6 +36,10 @@ TABS = {
     "liked": "Liked",
     "search": "Search",
 }
+
+
+SEARCH_HINT = "/ search YouTube Music: songs, albums, artists"
+AI_HINT = "a · describe a mood, the AI picks songs to start a radio"
 
 
 def clock(seconds: float | None) -> str:
@@ -108,6 +112,7 @@ class MusicApp(App):
         Binding("r", "repeat", "repeat"),
         Binding("s", "stop", "stop"),
         Binding("slash", "search", "search", key_display="/"),
+        Binding("a", "ai", "ai radio"),
         Binding("q", "quit", "quit"),
         Binding("escape", "back", show=False),
         Binding("left", "row('left')", show=False),
@@ -133,8 +138,7 @@ class MusicApp(App):
             for n, (tab, title) in enumerate(TABS.items(), 1):
                 with TabPane(f"{n} {title}", id=tab):
                     yield TrackList(tab)
-        placeholder = "/ search YouTube Music: songs, albums, artists"
-        yield Input(placeholder=placeholder, id="search")
+        yield Input(placeholder=SEARCH_HINT, id="search")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -374,7 +378,20 @@ class MusicApp(App):
         await control.stop()
 
     def action_search(self) -> None:
-        self.query_one("#search", Input).focus()
+        self.ask_for("search")
+
+    def action_ai(self) -> None:
+        self.ask_for("ai")
+
+    def ask_for(self, mode: str) -> None:
+        """The input at the bottom takes a search, or a mood for the AI radio."""
+        field = self.query_one("#search", Input)
+        field.placeholder = AI_HINT if mode == "ai" else SEARCH_HINT
+        field.focus()
+
+    @on(Input.Blurred, "#search")
+    def input_left(self, event: Input.Blurred) -> None:
+        event.input.placeholder = SEARCH_HINT
 
     def action_back(self) -> None:
         if isinstance(self.focused, Input):
@@ -394,11 +411,27 @@ class MusicApp(App):
 
     @on(Input.Submitted, "#search")
     def search(self, event: Input.Submitted) -> None:
-        query = event.value.strip()
-        if query:
-            event.input.clear()
+        text = event.value.strip()
+        if not text:
+            return
+        ai_mode = event.input.placeholder == AI_HINT
+        event.input.clear()
+        if ai_mode:
+            self.active_list().focus()
+            self.run_worker(self.ai_radio(text), group="launch", exclusive=True)
+        else:
             self.action_tab("search")
-            self.run_worker(self.find(query), group="search", exclusive=True)
+            self.run_worker(self.find(text), group="search", exclusive=True)
+
+    async def ai_radio(self, mood: str) -> None:
+        self.notify(f"asking the ai for «{mood}»…", timeout=5)
+        try:
+            tracks = await control.ai_radio(mood)
+        except Failure as e:
+            self.notify(str(e), severity="error", timeout=8)
+            return
+        self.notify(f"ai radio: {len(tracks)} songs, then the mix", timeout=5)
+        self.action_tab("radio")
 
     async def find(self, query: str) -> None:
         self.search_back.clear()
@@ -458,7 +491,7 @@ class MusicApp(App):
             self.notify(f"nothing playable on {album.title}")
             return
         try:
-            await control.start(tracks[0].id, queue=tracks, album=True)
+            await control.start(tracks[0].id, queue=tracks, then_radio=True, source=ALBUM)
         except Failure as e:
             self.notify(str(e), severity="error")
             return

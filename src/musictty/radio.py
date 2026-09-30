@@ -41,6 +41,7 @@ JUMP_MESSAGE = "musictty-jump"
 RADIO_MIX = "radio mix"
 LIKED_PLAYLIST = "liked playlist"
 ALBUM = "album"
+AI_RADIO = "ai radio"
 
 
 @dataclass

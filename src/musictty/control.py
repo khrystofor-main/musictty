@@ -8,10 +8,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import TypeVar
 
-from . import paths, player, youtube
+from . import ai, music, paths, player, youtube
 from .ipc import Mpv, NotRunning
 from .models import Track
-from .radio import ALBUM, LIKED_PLAYLIST, LIST_PROPERTY, RADIO_MIX, LaunchSpec
+from .radio import AI_RADIO, LIKED_PLAYLIST, LIST_PROPERTY, RADIO_MIX, LaunchSpec
 from .store import MAX_VOLUME, Store
 
 T = TypeVar("T")
@@ -69,11 +69,13 @@ async def start(
     query: str | None = None,
     queue: list[Track] | None = None,
     repeat_one: bool = False,
-    album: bool = False,
+    then_radio: bool = False,
+    source: str | None = None,
 ) -> None:
     """Start a new radio, replacing the playing one.
 
-    With a queue: the liked playlist in a loop, or an album followed by a radio.
+    With a queue: the liked playlist in a loop, or (then_radio) a queue that turns into a
+    radio from its last track: an album, the AI's picks.
     """
     if not player.find_mpv():
         raise Failure("mpv not found")
@@ -91,8 +93,8 @@ async def start(
         seed=seed,
         stream=stream,
         queue=queue,
-        source=ALBUM if album else LIKED_PLAYLIST if queue is not None else RADIO_MIX,
-        then_radio=album,
+        source=source or (LIKED_PLAYLIST if queue is not None else RADIO_MIX),
+        then_radio=then_radio,
         volume=settings.volume,
         # repeat is global and survives radio changes; repeat_one is for this run only
         loop_file=settings.repeat or repeat_one,
@@ -107,6 +109,19 @@ async def start(
     except NotRunning:
         raise Failure(f"the player did not start, see {paths.log_path()}") from None
     await mpv.close()
+
+
+async def ai_radio(mood: str) -> list[Track]:
+    """Ask the AI for songs that fit the mood, play them, then a radio from the last one."""
+    try:
+        queries = await asyncio.to_thread(ai.suggest, mood)
+    except ai.AIError as e:
+        raise Failure(str(e)) from None
+    tracks = await asyncio.to_thread(music.find_songs, queries)
+    if not tracks:
+        raise Failure("none of the ai's songs were found")
+    await start(tracks[0].id, queue=tracks, then_radio=True, source=AI_RADIO)
+    return tracks
 
 
 async def stop() -> None:

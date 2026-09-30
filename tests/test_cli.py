@@ -17,6 +17,7 @@ S, A, B = (tid(n) for n in range(3))
         (["3"], Call("recent", number=3)),
         (["search", "daft", "punk"], Call("radio", text="daft punk", action="search")),
         (["search", "next"], Call("radio", text="next", action="search")),
+        (["ai", "calm", "evening"], Call("ai", text="calm evening")),
         (["https://youtu.be/abcdefghijk"], Call("radio", text="https://youtu.be/abcdefghijk")),
         (
             ["https://music.youtube.com/watch?v=abc&x=1"],
@@ -45,6 +46,7 @@ def test_parse(argv, call):
     "argv",
     [
         ["search"],
+        ["ai"],
         ["repeat"],
         ["repeat", "maybe"],
         ["now", "please"],

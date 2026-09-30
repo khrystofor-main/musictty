@@ -146,7 +146,35 @@ def test_search(monkeypatch):
             await pilot.press("q")
 
     asyncio.run(scenario())
-    assert started == [(S, {}), (A, {"queue": album, "album": True})]
+    assert started == [(S, {}), (A, {"queue": album, "then_radio": True, "source": "album"})]
+
+
+def test_ai_radio(monkeypatch):
+    moods = []
+
+    async def fake_ai_radio(mood):
+        moods.append(mood)
+        if mood == "broken":
+            raise control.Failure("no ai key")
+        return [Track(S, "s"), Track(A, "a")]
+
+    monkeypatch.setattr(control, "ai_radio", fake_ai_radio)
+
+    async def scenario():
+        app = MusicApp()
+        async with app.run_test(size=SIZE) as pilot:
+            field = app.query_one("#search")
+            await pilot.press("a")
+            assert "mood" in field.placeholder
+            await pilot.press(*"calm evening", "enter")
+            await until(pilot, lambda: moods == ["calm evening"])
+            await until(pilot, lambda: app.query_one(TabbedContent).active == "radio")
+            assert "search" in field.placeholder  # back to search once the input is left
+            await pilot.press("a", *"broken", "enter")
+            await until(pilot, lambda: len(moods) == 2)
+            await pilot.press("slash", "escape", "q")
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.skipif(
