@@ -309,6 +309,22 @@ def mood_playlists(params: str, title: str) -> Page:
     return Page(title, f"{len(playlists)} playlists", [Section("", playlists)])
 
 
+def track_links(video_id: str) -> list[Result]:
+    """A track's artists and album, to go to their pages. The watch playlist of a track
+    starts with the track itself, with the ids that a mix or a history entry doesn't have."""
+    data = _client().get_watch_playlist(videoId=video_id, limit=1)
+    tracks = [t for t in data.get("tracks") or [] if isinstance(t, dict)]
+    track = next((t for t in tracks if t.get("videoId") == video_id), None)
+    if track is None:
+        return []
+    artists = [a for a in track.get("artists") or [] if isinstance(a, dict) and a.get("name")]
+    links = [Result(ARTISTS, a["id"], a["name"]) for a in artists if a.get("id")]
+    album = track.get("album")
+    if isinstance(album, dict) and album.get("id") and album.get("name"):
+        links.append(Result(ALBUMS, album["id"], display_title(_names(artists), album["name"])))
+    return links
+
+
 def artist_radio(playlist_id: str) -> list[Track]:
     """The tracks of an artist's radio, as YouTube Music starts it."""
     data = _client().get_watch_playlist(playlistId=playlist_id, limit=50)
